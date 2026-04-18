@@ -75,34 +75,69 @@ export default function AbsensiPage() {
     fetchData()
   }, [])
 
+  // ✅ IMPROVED: Get deadline time (priority: batas_absen > jam_selesai)
+  const getDeadlineTime = (jadwal: any): string | null => {
+    if (!jadwal) return null
+    
+    // Priority 1: Use batas_absen if exists
+    if (jadwal.batas_absen && jadwal.batas_absen.trim() !== '') {
+      return jadwal.batas_absen
+    }
+    
+    // Priority 2: Use jam_selesai as fallback
+    if (jadwal.jam_selesai && jadwal.jam_selesai.trim() !== '') {
+      return jadwal.jam_selesai
+    }
+    
+    // No deadline available
+    return null
+  }
+
   // ✅ Check if time is past deadline
-  const isPastDeadline = (batas: string | null) => {
-    if (!batas) return false
+  const isPastDeadline = (jadwal: any): boolean => {
+    if (!jadwal) return false
+    
+    const deadlineTime = getDeadlineTime(jadwal)
+    
+    if (!deadlineTime) {
+      console.warn('⚠️ No deadline for jadwal:', jadwal.nama_kegiatan)
+      return false
+    }
     
     try {
       const now = new Date()
-      const [batasHour, batasMin] = batas.split(':').map(Number)
-      
       const batasDate = new Date(now)
-      batasDate.setHours(batasHour, batasMin, 0, 0)
       
-      return now > batasDate
+      const [hour, min] = deadlineTime.split(':').map(Number)
+      batasDate.setHours(hour, min, 0, 0)
+      
+      const isPast = now > batasDate
+      
+      console.log(`📊 Deadline Check for "${jadwal.nama_kegiatan}":`)
+      console.log(`   Deadline: ${deadlineTime} (using ${jadwal.batas_absen ? 'batas_absen' : 'jam_selesai'})`)
+      console.log(`   Current: ${now.toLocaleTimeString()}`)
+      console.log(`   Is past: ${isPast}`)
+      
+      return isPast
     } catch (error) {
-      console.error('Error comparing time:', error)
+      console.error('❌ Error comparing time:', error)
       return false
     }
   }
 
   // ✅ Get time remaining until deadline
-  const getTimeRemaining = (batas: string | null) => {
-    if (!batas) return null
+  const getTimeRemaining = (jadwal: any): string | null => {
+    if (!jadwal) return null
+    
+    const deadlineTime = getDeadlineTime(jadwal)
+    if (!deadlineTime) return null
     
     try {
       const now = new Date()
-      const [batasHour, batasMin] = batas.split(':').map(Number)
-      
       const batasDate = new Date(now)
-      batasDate.setHours(batasHour, batasMin, 0, 0)
+      
+      const [hour, min] = deadlineTime.split(':').map(Number)
+      batasDate.setHours(hour, min, 0, 0)
       
       const diff = batasDate.getTime() - now.getTime()
       
@@ -115,6 +150,7 @@ export default function AbsensiPage() {
       const hours = Math.floor(minutes / 60)
       return `${hours}h ${minutes % 60}m lagi`
     } catch (error) {
+      console.error('Error calculating time remaining:', error)
       return null
     }
   }
@@ -128,7 +164,6 @@ export default function AbsensiPage() {
       
       console.log('📸 Starting photo upload:', filename)
       
-      // ✅ Upload file
       const { data, error: uploadError } = await supabase.storage
         .from('attendance-photos')
         .upload(filename, blob, {
@@ -143,7 +178,6 @@ export default function AbsensiPage() {
       
       console.log('✅ Upload success:', data)
       
-      // ✅ Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('attendance-photos')
         .getPublicUrl(filename)
@@ -164,8 +198,9 @@ export default function AbsensiPage() {
   const handleAbsen = async () => {
     if (!selectedJadwal) return
     
-    // ✅ LAYER 1: Double-check if still past deadline (security)
-    if (isPastDeadline(selectedJadwal.batas_absen)) {
+    // ✅ LAYER 1: Double-check if still past deadline
+    console.log('🔍 LAYER 1: Checking deadline before processing...')
+    if (isPastDeadline(selectedJadwal)) {
       toast({
         title: 'Waktu Habis',
         description: 'Waktu absensi sudah berakhir!',
@@ -183,10 +218,10 @@ export default function AbsensiPage() {
       if (!user) return
       
       const now = new Date()
-      const batas = selectedJadwal.batas_absen
       
-      // ✅ LAYER 2: Check if past deadline (main validation)
-      if (isPastDeadline(batas)) {
+      // ✅ LAYER 2: Final check before submission
+      console.log('🔍 LAYER 2: Final deadline check...')
+      if (isPastDeadline(selectedJadwal)) {
         toast({
           title: 'Waktu Habis',
           description: 'Sudah melewati batas absensi. Status akan di-set menjadi Alpa.',
@@ -238,12 +273,10 @@ export default function AbsensiPage() {
           console.log('📷 Processing photo...')
           console.log('Photo blob size:', photoBlob.size, 'bytes')
           
-          // ✅ Compress image
           const imageCompression = (await import('browser-image-compression')).default
           const compressed = await imageCompression(photoBlob as File, IMAGE_COMPRESSION_OPTIONS)
           console.log('✅ Compressed size:', compressed.size, 'bytes')
           
-          // ✅ Upload to storage
           fotoUrl = await uploadPhotoToStorage(compressed, user.id)
           console.log('🎉 Photo URL obtained:', fotoUrl)
           
@@ -254,7 +287,6 @@ export default function AbsensiPage() {
             description: 'Gagal upload foto. Absensi akan dicatat tanpa foto.',
             variant: 'destructive'
           })
-          // Continue dengan fotoUrl = null
           fotoUrl = null
         }
       }
@@ -316,7 +348,6 @@ export default function AbsensiPage() {
         description={`Jadwal hari ini - ${formatDate(new Date())}`}
       />
 
-      {/* Loading State */}
       {loading ? (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
@@ -324,14 +355,12 @@ export default function AbsensiPage() {
           ))}
         </div>
       ) : jadwals.length === 0 ? (
-        /* Empty State */
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
             Tidak ada jadwal hari ini.
           </CardContent>
         </Card>
       ) : (
-        /* Jadwal List */
         <div className="space-y-3">
           {jadwals.map((j: any) => (
             <Card
@@ -349,7 +378,7 @@ export default function AbsensiPage() {
                         Wajib Foto
                       </Badge>
                     )}
-                    {isPastDeadline(j.batas_absen) && !presensiMap[j.id] && (
+                    {isPastDeadline(j) && !presensiMap[j.id] && (
                       <Badge variant="destructive" className="text-xs">
                         Terlambat
                       </Badge>
@@ -359,9 +388,9 @@ export default function AbsensiPage() {
                     {j.jam_mulai}–{j.jam_selesai}
                     {j.batas_absen ? ` · Batas: ${j.batas_absen}` : ''}
                   </p>
-                  {j.batas_absen && !presensiMap[j.id] && (
+                  {!presensiMap[j.id] && (
                     <p className="text-xs text-orange-600 font-medium">
-                      ⏱️ {getTimeRemaining(j.batas_absen)}
+                      ⏱️ {getTimeRemaining(j)}
                     </p>
                   )}
                 </div>
@@ -375,8 +404,7 @@ export default function AbsensiPage() {
                     size="sm"
                     className="shrink-0"
                     onClick={() => {
-                      // ✅ LAYER 3: Check before opening modal
-                      if (isPastDeadline(j.batas_absen)) {
+                      if (isPastDeadline(j)) {
                         toast({
                           title: 'Waktu Habis',
                           description: 'Waktu absensi untuk kegiatan ini sudah berakhir.',
@@ -388,9 +416,9 @@ export default function AbsensiPage() {
                       resetPhoto()
                       getLocation()
                     }}
-                    disabled={isPastDeadline(j.batas_absen)}
+                    disabled={isPastDeadline(j)}
                   >
-                    {isPastDeadline(j.batas_absen) ? 'Terlambat' : 'Absen'}
+                    {isPastDeadline(j) ? 'Terlambat' : 'Absen'}
                   </Button>
                 )}
               </CardContent>
@@ -399,7 +427,6 @@ export default function AbsensiPage() {
         </div>
       )}
 
-      {/* Attendance Form Modal */}
       {selectedJadwal && (
         <Card className="border-primary">
           <CardHeader>
