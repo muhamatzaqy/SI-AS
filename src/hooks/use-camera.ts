@@ -14,7 +14,6 @@ export function useCamera() {
     try {
       setError(null)
       
-      // ✅ FIX: Support berbagai browser
       const constraints = {
         video: {
           facingMode: 'user',
@@ -30,13 +29,27 @@ export function useCamera() {
       
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream
-        // ✅ FIX: Ensure video plays
-        videoRef.current.play().catch(err => console.error('Play error:', err))
+        
+        // ✅ FIX: Wait for metadata before playing
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(err => {
+            console.error('Play error:', err)
+            setError('Gagal memutar video')
+          })
+        }
+        
+        // ✅ Fallback if metadata doesn't load
+        setTimeout(() => {
+          if (videoRef.current && videoRef.current.paused) {
+            videoRef.current.play().catch(err => {
+              console.error('Fallback play error:', err)
+            })
+          }
+        }, 500)
       }
     } catch (err) {
       console.error('Camera error:', err)
       
-      // ✅ FIX: Better error messages
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError') {
           setError('Izin kamera ditolak. Periksa setting browser Anda.')
@@ -44,6 +57,8 @@ export function useCamera() {
           setError('Kamera tidak ditemukan di device ini.')
         } else if (err.name === 'NotSupportedError') {
           setError('Browser tidak support akses kamera.')
+        } else if (err.name === 'SecurityError') {
+          setError('Akses kamera ditolak karena alasan keamanan. Gunakan HTTPS.')
         } else {
           setError(`Error kamera: ${err.message}`)
         }
@@ -75,7 +90,7 @@ export function useCamera() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     
-    // ✅ FIX: Mirror selfie camera
+    // ✅ Mirror selfie camera (flip horizontally)
     ctx.scale(-1, 1)
     ctx.translate(-canvas.width, 0)
     ctx.drawImage(video, 0, 0)
