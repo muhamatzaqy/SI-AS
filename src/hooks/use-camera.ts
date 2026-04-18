@@ -12,33 +12,104 @@ export function useCamera() {
 
   const startCamera = useCallback(async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-      setStream(mediaStream); setIsCapturing(true); setError(null)
-      if (videoRef.current) videoRef.current.srcObject = mediaStream
-    } catch { setError('Gagal mengakses kamera') }
+      setError(null)
+      
+      // ✅ FIX: Support berbagai browser
+      const constraints = {
+        video: {
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      }
+      
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+      setStream(mediaStream)
+      setIsCapturing(true)
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream
+        // ✅ FIX: Ensure video plays
+        videoRef.current.play().catch(err => console.error('Play error:', err))
+      }
+    } catch (err) {
+      console.error('Camera error:', err)
+      
+      // ✅ FIX: Better error messages
+      if (err instanceof DOMException) {
+        if (err.name === 'NotAllowedError') {
+          setError('Izin kamera ditolak. Periksa setting browser Anda.')
+        } else if (err.name === 'NotFoundError') {
+          setError('Kamera tidak ditemukan di device ini.')
+        } else if (err.name === 'NotSupportedError') {
+          setError('Browser tidak support akses kamera.')
+        } else {
+          setError(`Error kamera: ${err.message}`)
+        }
+      } else {
+        setError('Gagal mengakses kamera')
+      }
+    }
   }, [])
 
   const stopCamera = useCallback(() => {
-    stream?.getTracks().forEach(t => t.stop())
-    setStream(null); setIsCapturing(false)
+    if (stream) {
+      stream.getTracks().forEach(track => {
+        track.stop()
+      })
+      setStream(null)
+    }
+    setIsCapturing(false)
   }, [stream])
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return
-    const video = videoRef.current; const canvas = canvasRef.current
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight
+    
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    
+    // ✅ FIX: Mirror selfie camera
+    ctx.scale(-1, 1)
+    ctx.translate(-canvas.width, 0)
     ctx.drawImage(video, 0, 0)
-    canvas.toBlob(blob => {
-      if (blob) { setPhotoUrl(URL.createObjectURL(blob)); setPhotoBlob(blob); stopCamera() }
-    }, 'image/jpeg', 0.8)
+    
+    canvas.toBlob(
+      blob => {
+        if (blob) {
+          setPhotoUrl(URL.createObjectURL(blob))
+          setPhotoBlob(blob)
+          stopCamera()
+        }
+      },
+      'image/jpeg',
+      0.9
+    )
   }, [stopCamera])
 
   const resetPhoto = useCallback(() => {
     if (photoUrl) URL.revokeObjectURL(photoUrl)
-    setPhotoUrl(null); setPhotoBlob(null)
+    setPhotoUrl(null)
+    setPhotoBlob(null)
   }, [photoUrl])
 
-  return { stream, photoUrl, photoBlob, error, isCapturing, videoRef, canvasRef, startCamera, stopCamera, capturePhoto, resetPhoto }
+  return {
+    stream,
+    photoUrl,
+    photoBlob,
+    error,
+    isCapturing,
+    videoRef,
+    canvasRef,
+    startCamera,
+    stopCamera,
+    capturePhoto,
+    resetPhoto
+  }
 }
