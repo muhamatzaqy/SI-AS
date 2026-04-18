@@ -75,7 +75,6 @@ export default function AbsensiPage() {
     fetchData()
   }, [])
 
-  // ✅ Check if time is past deadline
   const isPastDeadline = (batas: string | null) => {
     if (!batas) return false
     
@@ -93,7 +92,6 @@ export default function AbsensiPage() {
     }
   }
 
-  // ✅ Get time remaining until deadline
   const getTimeRemaining = (batas: string | null) => {
     if (!batas) return null
     
@@ -119,6 +117,48 @@ export default function AbsensiPage() {
     }
   }
 
+  // ✅ NEW: Upload photo to Supabase Storage
+  const uploadPhotoToStorage = async (blob: Blob, userId: string) => {
+    try {
+      const timestamp = Date.now()
+      const random = Math.random().toString(36).substring(7)
+      const filename = `${userId}/${timestamp}_${random}.jpg`
+      
+      console.log('📸 Starting photo upload:', filename)
+      
+      // ✅ Upload file
+      const { data, error: uploadError } = await supabase.storage
+        .from('attendance-photos')
+        .upload(filename, blob, {
+          contentType: 'image/jpeg',
+          upsert: false
+        })
+      
+      if (uploadError) {
+        console.error('❌ Upload error:', uploadError)
+        throw uploadError
+      }
+      
+      console.log('✅ Upload success:', data)
+      
+      // ✅ Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('attendance-photos')
+        .getPublicUrl(filename)
+      
+      console.log('🔗 Public URL:', publicUrl)
+      
+      if (!publicUrl) {
+        throw new Error('Failed to generate public URL')
+      }
+      
+      return publicUrl
+    } catch (error) {
+      console.error('💥 Photo upload failed:', error)
+      throw error
+    }
+  }
+
   const handleAbsen = async () => {
     if (!selectedJadwal) return
     setSubmitting(true)
@@ -138,7 +178,6 @@ export default function AbsensiPage() {
           variant: 'destructive'
         })
         
-        // ✅ Auto-set status to "alpa"
         const { error: alpaError } = await supabase
           .from('presensi')
           .upsert({
@@ -166,7 +205,7 @@ export default function AbsensiPage() {
         return
       }
       
-      // ✅ Check if photo is required
+      // ✅ Handle photo upload
       let fotoUrl: string | null = null
       if (selectedJadwal.wajib_foto) {
         if (!photoBlob) {
@@ -180,33 +219,41 @@ export default function AbsensiPage() {
         }
         
         try {
+          console.log('📷 Processing photo...')
+          console.log('Photo blob size:', photoBlob.size, 'bytes')
+          
+          // ✅ Compress image
           const imageCompression = (await import('browser-image-compression')).default
           const compressed = await imageCompression(photoBlob as File, IMAGE_COMPRESSION_OPTIONS)
-          const filename = `${user.id}/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`
+          console.log('✅ Compressed size:', compressed.size, 'bytes')
           
-          const { data: uploaded, error: uploadError } = await supabase.storage
-            .from('attendance-photos')
-            .upload(filename, compressed, { contentType: 'image/jpeg' })
+          // ✅ Upload to storage
+          fotoUrl = await uploadPhotoToStorage(compressed, user.id)
+          console.log('🎉 Photo URL obtained:', fotoUrl)
           
-          if (uploadError) throw uploadError
-          
-          if (uploaded) {
-            fotoUrl = supabase.storage
-              .from('attendance-photos')
-              .getPublicUrl(uploaded.path).data.publicUrl
-          }
         } catch (photoError) {
-          console.error('Photo upload error:', photoError)
+          console.error('❌ Photo processing failed:', photoError)
           toast({
             title: 'Error Upload Foto',
-            description: 'Gagal upload foto, tapi presensi akan tetap dicatat',
-            variant: 'default'
+            description: 'Gagal upload foto. Absensi akan dicatat tanpa foto.',
+            variant: 'destructive'
           })
+          // Continue dengan fotoUrl = null
+          fotoUrl = null
         }
       }
       
       // ✅ Submit attendance
-      const { error } = await supabase
+      console.log('💾 Submitting attendance with data:', {
+        mahasiswa_id: user.id,
+        jadwal_id: selectedJadwal.id,
+        status: 'hadir',
+        foto_url: fotoUrl,
+        latitude: latitude || null,
+        longitude: longitude || null
+      })
+      
+      const { data: insertData, error } = await supabase
         .from('presensi')
         .upsert({
           mahasiswa_id: user.id,
@@ -218,11 +265,16 @@ export default function AbsensiPage() {
           longitude: longitude || null
         })
       
-      if (error) throw error
+      if (error) {
+        console.error('❌ Database error:', error)
+        throw error
+      }
+      
+      console.log('✅ Attendance saved:', insertData)
       
       toast({
         title: 'Absen Berhasil! ✅',
-        description: 'Kehadiran tercatat',
+        description: fotoUrl ? 'Kehadiran dan foto tercatat' : 'Kehadiran tercatat',
         variant: 'success'
       })
       
@@ -230,7 +282,7 @@ export default function AbsensiPage() {
       resetPhoto()
       fetchData()
     } catch (error) {
-      console.error('Attendance error:', error)
+      console.error('❌ Attendance error:', error)
       toast({
         title: 'Error',
         description: error instanceof Error ? error.message : 'Gagal absen',
@@ -248,7 +300,6 @@ export default function AbsensiPage() {
         description={`Jadwal hari ini - ${formatDate(new Date())}`}
       />
 
-      {/* Loading State */}
       {loading ? (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
@@ -256,14 +307,12 @@ export default function AbsensiPage() {
           ))}
         </div>
       ) : jadwals.length === 0 ? (
-        /* Empty State */
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
             Tidak ada jadwal hari ini.
           </CardContent>
         </Card>
       ) : (
-        /* Jadwal List */
         <div className="space-y-3">
           {jadwals.map((j: any) => (
             <Card
@@ -322,7 +371,6 @@ export default function AbsensiPage() {
         </div>
       )}
 
-      {/* Attendance Form */}
       {selectedJadwal && (
         <Card className="border-primary">
           <CardHeader>
