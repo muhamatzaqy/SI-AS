@@ -75,6 +75,7 @@ export default function AbsensiPage() {
     fetchData()
   }, [])
 
+  // ✅ Check if time is past deadline
   const isPastDeadline = (batas: string | null) => {
     if (!batas) return false
     
@@ -92,6 +93,7 @@ export default function AbsensiPage() {
     }
   }
 
+  // ✅ Get time remaining until deadline
   const getTimeRemaining = (batas: string | null) => {
     if (!batas) return null
     
@@ -117,7 +119,7 @@ export default function AbsensiPage() {
     }
   }
 
-  // ✅ NEW: Upload photo to Supabase Storage
+  // ✅ Upload photo to Supabase Storage
   const uploadPhotoToStorage = async (blob: Blob, userId: string) => {
     try {
       const timestamp = Date.now()
@@ -161,6 +163,19 @@ export default function AbsensiPage() {
 
   const handleAbsen = async () => {
     if (!selectedJadwal) return
+    
+    // ✅ LAYER 1: Double-check if still past deadline (security)
+    if (isPastDeadline(selectedJadwal.batas_absen)) {
+      toast({
+        title: 'Waktu Habis',
+        description: 'Waktu absensi sudah berakhir!',
+        variant: 'destructive'
+      })
+      setSelectedJadwal(null)
+      resetPhoto()
+      return
+    }
+    
     setSubmitting(true)
     
     try {
@@ -170,7 +185,7 @@ export default function AbsensiPage() {
       const now = new Date()
       const batas = selectedJadwal.batas_absen
       
-      // ✅ Check if past deadline
+      // ✅ LAYER 2: Check if past deadline (main validation)
       if (isPastDeadline(batas)) {
         toast({
           title: 'Waktu Habis',
@@ -178,6 +193,7 @@ export default function AbsensiPage() {
           variant: 'destructive'
         })
         
+        // ✅ Auto-set status to "alpa"
         const { error: alpaError } = await supabase
           .from('presensi')
           .upsert({
@@ -300,6 +316,7 @@ export default function AbsensiPage() {
         description={`Jadwal hari ini - ${formatDate(new Date())}`}
       />
 
+      {/* Loading State */}
       {loading ? (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
@@ -307,12 +324,14 @@ export default function AbsensiPage() {
           ))}
         </div>
       ) : jadwals.length === 0 ? (
+        /* Empty State */
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
             Tidak ada jadwal hari ini.
           </CardContent>
         </Card>
       ) : (
+        /* Jadwal List */
         <div className="space-y-3">
           {jadwals.map((j: any) => (
             <Card
@@ -356,6 +375,15 @@ export default function AbsensiPage() {
                     size="sm"
                     className="shrink-0"
                     onClick={() => {
+                      // ✅ LAYER 3: Check before opening modal
+                      if (isPastDeadline(j.batas_absen)) {
+                        toast({
+                          title: 'Waktu Habis',
+                          description: 'Waktu absensi untuk kegiatan ini sudah berakhir.',
+                          variant: 'destructive'
+                        })
+                        return
+                      }
                       setSelectedJadwal(j)
                       resetPhoto()
                       getLocation()
@@ -371,6 +399,7 @@ export default function AbsensiPage() {
         </div>
       )}
 
+      {/* Attendance Form Modal */}
       {selectedJadwal && (
         <Card className="border-primary">
           <CardHeader>
