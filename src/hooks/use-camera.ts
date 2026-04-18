@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 
 export function useCamera() {
   const [stream, setStream] = useState<MediaStream | null>(null)
@@ -10,9 +10,28 @@ export function useCamera() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
+  // ✅ FIX: Ensure video plays when stream is set
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream
+      // Ensure video plays
+      const playPromise = videoRef.current.play()
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.error('Auto play failed:', error)
+        })
+      }
+    }
+  }, [stream])
+
   const startCamera = useCallback(async () => {
     try {
       setError(null)
+      
+      // Stop previous stream if exists
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
       
       const constraints = {
         video: {
@@ -23,30 +42,13 @@ export function useCamera() {
         audio: false
       }
       
+      console.log('Requesting camera access...')
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+      console.log('Camera access granted, stream:', mediaStream)
+      
       setStream(mediaStream)
       setIsCapturing(true)
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream
-        
-        // ✅ FIX: Wait for metadata before playing
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(err => {
-            console.error('Play error:', err)
-            setError('Gagal memutar video')
-          })
-        }
-        
-        // ✅ Fallback if metadata doesn't load
-        setTimeout(() => {
-          if (videoRef.current && videoRef.current.paused) {
-            videoRef.current.play().catch(err => {
-              console.error('Fallback play error:', err)
-            })
-          }
-        }, 500)
-      }
     } catch (err) {
       console.error('Camera error:', err)
       
@@ -65,8 +67,10 @@ export function useCamera() {
       } else {
         setError('Gagal mengakses kamera')
       }
+      
+      setIsCapturing(false)
     }
-  }, [])
+  }, [stream])
 
   const stopCamera = useCallback(() => {
     if (stream) {
@@ -79,25 +83,41 @@ export function useCamera() {
   }, [stream])
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return
+    if (!videoRef.current || !canvasRef.current) {
+      console.error('Video or canvas ref not available')
+      return
+    }
     
     const video = videoRef.current
     const canvas = canvasRef.current
+    
+    if (!video.videoWidth || !video.videoHeight) {
+      console.error('Video dimensions not available')
+      return
+    }
+    
+    console.log('Capturing photo:', video.videoWidth, 'x', video.videoHeight)
     
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!ctx) {
+      console.error('Canvas context not available')
+      return
+    }
     
     // ✅ Mirror selfie camera (flip horizontally)
+    ctx.save()
     ctx.scale(-1, 1)
     ctx.translate(-canvas.width, 0)
     ctx.drawImage(video, 0, 0)
+    ctx.restore()
     
     canvas.toBlob(
       blob => {
         if (blob) {
+          console.log('Photo blob created:', blob.size)
           setPhotoUrl(URL.createObjectURL(blob))
           setPhotoBlob(blob)
           stopCamera()
@@ -109,7 +129,9 @@ export function useCamera() {
   }, [stopCamera])
 
   const resetPhoto = useCallback(() => {
-    if (photoUrl) URL.revokeObjectURL(photoUrl)
+    if (photoUrl) {
+      URL.revokeObjectURL(photoUrl)
+    }
     setPhotoUrl(null)
     setPhotoBlob(null)
   }, [photoUrl])
