@@ -1,0 +1,118 @@
+'use client'
+import { useEffect, useRef, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { PageHeader } from '@/components/shared/page-header'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useToast } from '@/hooks/use-toast'
+import { useGeolocation } from '@/hooks/use-geolocation'
+import { useCamera } from '@/hooks/use-camera'
+import { Camera, MapPin, Check, Loader2 } from 'lucide-react'
+import { IMAGE_COMPRESSION_OPTIONS } from '@/lib/constants'
+import { formatDate, formatLabel } from '@/lib/utils'
+
+export default function AbsensiPage() {
+  const [jadwals, setJadwals] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedJadwal, setSelectedJadwal] = useState<any>(null)
+  const [presensiMap, setPresensiMap] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState(false)
+  const { toast } = useToast()
+  const { latitude, longitude, error: geoError, loading: geoLoading, getLocation } = useGeolocation()
+  const { photoUrl, photoBlob, isCapturing, videoRef, canvasRef, startCamera, capturePhoto, resetPhoto } = useCamera()
+  const supabase = createClient()
+
+  const fetchData = async () => {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: profile } = await supabase.from('profiles').select('unit').eq('id', user.id).single()
+    const today = new Date().toISOString().split('T')[0]
+    const { data: jadwalData } = await supabase.from('jadwal_kegiatan').select('*').eq('tanggal', today).or(`target_unit.eq.${profile?.unit},target_unit.eq.gabungan`)
+    setJadwals(jadwalData ?? [])
+    if (jadwalData && jadwalData.length > 0) {
+      const ids = jadwalData.map((j: any) => j.id)
+      const { data: presensiData } = await supabase.from('presensi').select('jadwal_id, status').eq('mahasiswa_id', user.id).in('jadwal_id', ids)
+      const map: Record<string, string> = {}
+      ;(presensiData ?? []).forEach((p: any) => { map[p.jadwal_id] = p.status })
+      setPresensiMap(map)
+    }
+    setLoading(false)
+  }
+  useEffect(() => { fetchData() }, []) // eslint-disable-line
+
+  const handleAbsen = async () => {
+    if (!selectedJadwal) return
+    setSubmitting(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const now = new Date()
+      const batas = selectedJadwal.batas_absen
+      if (batas && now.toTimeString().slice(0, 5) > batas) { toast({ title: 'Waktu Habis', description: 'Sudah melewati batas absensi', variant: 'destructive' }); setSubmitting(false); return }
+      let fotoUrl: string | null = null
+      if (selectedJadwal.wajib_foto) {
+        if (!photoBlob) { toast({ title: 'Foto Diperlukan', description: 'Ambil foto selfie terlebih dahulu', variant: 'destructive' }); setSubmitting(false); return }
+        const imageCompression = (await import('browser-image-compression')).default
+        const compressed = await imageCompression(photoBlob as File, IMAGE_COMPRESSION_OPTIONS)
+        const { data: uploaded } = await supabase.storage.from('attendance-photos').upload(`${user.id}/${Date.now()}.jpg`, compressed, { contentType: 'image/jpeg' })
+        if (uploaded) fotoUrl = supabase.storage.from('attendance-photos').getPublicUrl(uploaded.path).data.publicUrl
+      }
+      const { error } = await supabase.from('presensi').upsert({ mahasiswa_id: user.id, jadwal_id: selectedJadwal.id, status: 'hadir', waktu_absen: now.toISOString(), foto_url: fotoUrl, latitude, longitude })
+      if (error) throw error
+      toast({ title: 'Absen Berhasil!', description: 'Kehadiran tercatat', variant: 'success' })
+      setSelectedJadwal(null); resetPhoto(); fetchData()
+    } catch { toast({ title: 'Error', description: 'Gagal absen', variant: 'destructive' }) }
+    finally { setSubmitting(false) }
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Absensi Digital" description={`Jadwal hari ini - ${formatDate(new Date())}`} />
+      {loading ? <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
+      : jadwals.length === 0 ? <Card><CardContent className="p-8 text-center text-muted-foreground">Tidak ada jadwal hari ini.</CardContent></Card>
+      : <div className="space-y-3">{jadwals.map((j: any) => (
+        <Card key={j.id} className={selectedJadwal?.id === j.id ? 'ring-2 ring-primary' : ''}>
+          <CardContent className="flex items-center justify-between gap-3 p-3 sm:p-4">
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap"><p className="font-medium text-sm">{j.nama_kegiatan}</p>{j.wajib_foto && <Badge variant="info">Wajib Foto</Badge>}</div>
+              <p className="text-xs sm:text-sm text-muted-foreground">{j.jam_mulai}–{j.jam_selesai}{j.batas_absen ? ` · Batas: ${j.batas_absen}` : ''}</p>
+            </div>
+            {presensiMap[j.id] ? <Badge variant="success"><Check className="mr-1 h-3 w-3" />{formatLabel(presensiMap[j.id])}</Badge>
+            : <Button size="sm" className="shrink-0" onClick={() => { setSelectedJadwal(j); resetPhoto(); getLocation() }}>Absen</Button>}
+          </CardContent>
+        </Card>
+      ))}</div>}
+      {selectedJadwal && (
+        <Card>
+          <CardHeader><CardTitle>Absen: {selectedJadwal.nama_kegiatan}</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-2 text-sm">
+              <MapPin className="h-4 w-4 text-green-500" />
+              {geoLoading ? 'Mendapatkan lokasi...' : geoError ? `Error: ${geoError}` : latitude ? `${latitude.toFixed(6)}, ${longitude?.toFixed(6)}` : 'Klik untuk dapatkan lokasi'}
+              {!latitude && !geoLoading && <Button size="sm" variant="outline" onClick={getLocation}>Dapatkan Lokasi</Button>}
+            </div>
+            {selectedJadwal.wajib_foto && (
+              <div className="space-y-3">
+                {isCapturing ? (
+                  <div className="relative"><video ref={videoRef} autoPlay playsInline className="w-full rounded-lg" /><canvas ref={canvasRef} className="hidden" /><Button className="absolute bottom-3 left-1/2 -translate-x-1/2" onClick={capturePhoto}><Camera className="mr-2 h-4 w-4" />Ambil Foto</Button></div>
+                ) : photoUrl ? (
+                  <div className="space-y-2"><img src={photoUrl} alt="Selfie" className="w-full rounded-lg max-h-64 object-cover" /><Button variant="outline" onClick={startCamera} className="w-full">Foto Ulang</Button></div>
+                ) : (
+                  <Button onClick={startCamera} className="w-full" variant="outline"><Camera className="mr-2 h-4 w-4" />Buka Kamera Selfie</Button>
+                )}
+              </div>
+            )}
+            <div className="flex gap-3">
+              <Button className="flex-1" onClick={handleAbsen} disabled={submitting || geoLoading}>{submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}Konfirmasi Absen</Button>
+              <Button variant="outline" className="flex-1" onClick={() => { setSelectedJadwal(null); resetPhoto() }}>Batal</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+export const dynamic = 'force-dynamic'
