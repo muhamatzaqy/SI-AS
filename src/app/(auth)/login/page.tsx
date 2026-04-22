@@ -69,8 +69,8 @@ export default function LoginPage() {
             </svg>
           </div>
 
-          <h1 className="text-3xl font-bold text-white tracking-tight">SI-ASRAMA</h1>
-          <p className="mt-1 text-sm text-white/70">Sistem Informasi Asrama Ma&apos;had Aly &amp; LKIM</p>
+          <h1 className="text-3xl font-bold text-white tracking-tight">SANGAR</h1>
+          <p className="mt-1 text-sm text-white/70">Sistem Absensi Ngaji dan Sorogan Asrama Ma&apos;had Aly &amp; LKIM</p>
         </div>
 
         {/* Glass morphism card */}
@@ -133,7 +133,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-white/50">
-          © 2024 SI-ASRAMA Ma&apos;had Aly &amp; LKIM
+          © 2026 SANGAR Ma&apos;had Aly &amp; LKIM
         </p>
       </div>
     </div>
