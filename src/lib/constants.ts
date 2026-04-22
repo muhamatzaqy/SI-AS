@@ -30,16 +30,17 @@ export const JENIS_IZIN_OPTIONS = [
 ] as const
 
 export const KITAB_NGAJI_OPTIONS = [
-  { value: 'Fathul Qorib', label: 'Fathul Qorib' },
-  { value: 'Safinatun Najah', label: 'Safinatun Najah' },
-  { value: 'Taqrib', label: 'Taqrib' },
-  { value: "Ta'lim Muta'alim", label: "Ta'lim Muta'alim" },
-  { value: 'Jurumiyah', label: 'Jurumiyah' },
-  { value: 'Amtsilati', label: 'Amtsilati' },
-  { value: 'Bulughul Maram', label: 'Bulughul Maram' },
+  { value: 'Nahwu', label: 'Nahwu' },
+  { value: 'Nashoihul Ibad', label: 'Nashoihul Ibad' },
+  { value: "Mauidlotul Mu'minin", label: "Mauidlotul Mu'minin" },
+  { value: 'Shorof', label: 'Shorof' },
+  { value: 'Risalatul Barokah', label: 'Risalatul Barokah' },
+  { value: 'Tuhfatuttullab', label: 'Tuhfatuttullab' },
   { value: 'Riyadhus Shalihin', label: 'Riyadhus Shalihin' },
-  { value: 'Ihya Ulumiddin', label: 'Ihya Ulumiddin' },
-  { value: 'Alfiyah Ibnu Malik', label: 'Alfiyah Ibnu Malik' },
+  { value: 'Tafsir Jalalain', label: 'Tafsir Jalalain' },
+  { value: 'Tajwid', label: 'Tajwid' },
+  { value: 'Mafahim', label: 'Mafahim' },
+  { value: 'Sorogan', label: 'Sorogan' },
   { value: 'Lainnya', label: 'Lainnya' },
 ] as const
 
