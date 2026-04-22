@@ -64,7 +64,7 @@ export function Sidebar({ user }: { user: Profile }) {
             </svg>
           </div>
           <div>
-            <p className="font-bold leading-none text-white tracking-wide">SI-ASRAMA</p>
+            <p className="font-bold leading-none text-white tracking-wide">SANGAR</p>
             <p className="text-xs text-white/60 mt-0.5">Ma&apos;had Aly &amp; LKIM</p>
           </div>
         </div>
@@ -141,7 +141,7 @@ export function Sidebar({ user }: { user: Profile }) {
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />
           </svg>
-          <span className="font-bold text-white">SI-ASRAMA</span>
+          <span className="font-bold text-white">SANGAR</span>
         </div>
       </div>
 
