@@ -75,21 +75,18 @@ export default function AbsensiPage() {
     fetchData()
   }, [])
 
-  // ✅ IMPROVED: Get deadline time (priority: batas_absen > jam_selesai)
+  // ✅ Get deadline time (priority: batas_absen > jam_selesai)
   const getDeadlineTime = (jadwal: any): string | null => {
     if (!jadwal) return null
     
-    // Priority 1: Use batas_absen if exists
     if (jadwal.batas_absen && jadwal.batas_absen.trim() !== '') {
       return jadwal.batas_absen
     }
     
-    // Priority 2: Use jam_selesai as fallback
     if (jadwal.jam_selesai && jadwal.jam_selesai.trim() !== '') {
       return jadwal.jam_selesai
     }
     
-    // No deadline available
     return null
   }
 
@@ -155,15 +152,38 @@ export default function AbsensiPage() {
     }
   }
 
-  // ✅ Upload photo to Supabase Storage
+  // ✅ IMPROVED: Upload photo with complete logging
   const uploadPhotoToStorage = async (blob: Blob, userId: string) => {
     try {
       const timestamp = Date.now()
       const random = Math.random().toString(36).substring(7)
       const filename = `${userId}/${timestamp}_${random}.jpg`
       
-      console.log('📸 Starting photo upload:', filename)
+      console.log('📸 Step 1: Starting photo upload')
+      console.log('   Filename:', filename)
+      console.log('   File size:', blob.size, 'bytes')
+      console.log('   File type:', blob.type)
       
+      // ✅ Verify bucket exists
+      console.log('📦 Step 2: Checking storage buckets...')
+      const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
+      
+      if (bucketsError) {
+        console.error('❌ Error listing buckets:', bucketsError)
+        throw bucketsError
+      }
+      
+      console.log('   Available buckets:', buckets?.map(b => b.name))
+      
+      const bucketExists = buckets?.some(b => b.name === 'attendance-photos')
+      if (!bucketExists) {
+        throw new Error('❌ Bucket "attendance-photos" not found. Please create it in Supabase Storage.')
+      }
+      
+      console.log('✅ Bucket "attendance-photos" exists')
+      
+      // ✅ Upload file
+      console.log('📤 Step 3: Uploading file to storage...')
       const { data, error: uploadError } = await supabase.storage
         .from('attendance-photos')
         .upload(filename, blob, {
@@ -173,22 +193,38 @@ export default function AbsensiPage() {
       
       if (uploadError) {
         console.error('❌ Upload error:', uploadError)
+        console.error('   Error name:', uploadError.name)
+        console.error('   Error message:', uploadError.message)
         throw uploadError
       }
       
-      console.log('✅ Upload success:', data)
+      console.log('✅ File uploaded successfully')
+      console.log('   File path:', data?.path)
+      console.log('   Full path:', data?.fullPath)
       
+      // ✅ Get public URL
+      console.log('🔗 Step 4: Generating public URL...')
       const { data: { publicUrl } } = supabase.storage
         .from('attendance-photos')
         .getPublicUrl(filename)
       
-      console.log('🔗 Public URL:', publicUrl)
+      console.log('✅ Public URL generated:', publicUrl)
       
       if (!publicUrl) {
         throw new Error('Failed to generate public URL')
       }
       
+      // ✅ Verify URL format
+      if (!publicUrl.startsWith('http')) {
+        throw new Error('Invalid URL format: ' + publicUrl)
+      }
+      
+      console.log('🔍 Step 5: URL verification')
+      console.log('   URL starts with http:', publicUrl.startsWith('http'))
+      console.log('   URL length:', publicUrl.length)
+      
       return publicUrl
+      
     } catch (error) {
       console.error('💥 Photo upload failed:', error)
       throw error
@@ -228,7 +264,6 @@ export default function AbsensiPage() {
           variant: 'destructive'
         })
         
-        // ✅ Auto-set status to "alpa"
         const { error: alpaError } = await supabase
           .from('presensi')
           .upsert({
@@ -256,7 +291,7 @@ export default function AbsensiPage() {
         return
       }
       
-      // ✅ Handle photo upload
+      // ✅ Handle photo upload with detailed logging
       let fotoUrl: string | null = null
       if (selectedJadwal.wajib_foto) {
         if (!photoBlob) {
@@ -270,21 +305,26 @@ export default function AbsensiPage() {
         }
         
         try {
-          console.log('📷 Processing photo...')
-          console.log('Photo blob size:', photoBlob.size, 'bytes')
+          console.log('📷 Processing photo blob...')
+          console.log('   Blob size:', photoBlob.size, 'bytes')
+          console.log('   Blob type:', photoBlob.type)
           
           const imageCompression = (await import('browser-image-compression')).default
           const compressed = await imageCompression(photoBlob as File, IMAGE_COMPRESSION_OPTIONS)
-          console.log('✅ Compressed size:', compressed.size, 'bytes')
+          
+          console.log('✅ Photo compressed')
+          console.log('   Original size:', photoBlob.size, 'bytes')
+          console.log('   Compressed size:', compressed.size, 'bytes')
+          console.log('   Compression ratio:', ((1 - compressed.size / photoBlob.size) * 100).toFixed(1) + '%')
           
           fotoUrl = await uploadPhotoToStorage(compressed, user.id)
-          console.log('🎉 Photo URL obtained:', fotoUrl)
+          console.log('🎉 Photo URL obtained and verified:', fotoUrl)
           
         } catch (photoError) {
           console.error('❌ Photo processing failed:', photoError)
           toast({
             title: 'Error Upload Foto',
-            description: 'Gagal upload foto. Absensi akan dicatat tanpa foto.',
+            description: (photoError as Error).message || 'Gagal upload foto. Absensi akan dicatat tanpa foto.',
             variant: 'destructive'
           })
           fotoUrl = null
@@ -292,13 +332,15 @@ export default function AbsensiPage() {
       }
       
       // ✅ Submit attendance
-      console.log('💾 Submitting attendance with data:', {
+      console.log('💾 Step 6: Submitting attendance to database...')
+      console.log('   Data:', {
         mahasiswa_id: user.id,
         jadwal_id: selectedJadwal.id,
         status: 'hadir',
         foto_url: fotoUrl,
         latitude: latitude || null,
-        longitude: longitude || null
+        longitude: longitude || null,
+        waktu_absen: now.toISOString()
       })
       
       const { data: insertData, error } = await supabase
@@ -315,10 +357,30 @@ export default function AbsensiPage() {
       
       if (error) {
         console.error('❌ Database error:', error)
+        console.error('   Error code:', error.code)
+        console.error('   Error message:', error.message)
         throw error
       }
       
-      console.log('✅ Attendance saved:', insertData)
+      console.log('✅ Attendance saved to database')
+      console.log('   Returned data:', insertData)
+      
+      // ✅ Verify data was saved
+      console.log('🔍 Step 7: Verifying data was saved...')
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('presensi')
+        .select('*')
+        .eq('mahasiswa_id', user.id)
+        .eq('jadwal_id', selectedJadwal.id)
+        .single()
+      
+      if (!verifyError) {
+        console.log('✅ Data verified in database')
+        console.log('   Foto URL in DB:', verifyData?.foto_url)
+        console.log('   Status in DB:', verifyData?.status)
+      } else {
+        console.warn('⚠️ Could not verify data:', verifyError)
+      }
       
       toast({
         title: 'Absen Berhasil! ✅',
