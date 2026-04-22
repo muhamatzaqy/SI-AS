@@ -8,8 +8,8 @@ const geistSans = GeistSans;
 const geistMono = GeistMono;
 
 export const metadata: Metadata = {
-  title: 'SI-ASRAMA',
-  description: "Sistem Informasi Asrama Ma'had Aly & LKIM",
+  title: 'SANGAR',
+  description: "Sistem Absensi Ngaji dan Sorogan Ma'had Aly & LKIM",
 }
 
 export const viewport: Viewport = {
