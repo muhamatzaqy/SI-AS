@@ -29,14 +29,17 @@ export default function JadwalPage() {
   const [selectedKitab, setSelectedKitab] = useState('')
   const [selectedKegiatanPengurus, setSelectedKegiatanPengurus] = useState('')
   
-  // ✅ New state for Mark Alpa
+  // ✅ Mark Alpha state
   const [markAlpaDialogOpen, setMarkAlpaDialogOpen] = useState(false)
-  const [selectedJadwalForAlpa, setSelectedJadwalForAlpa] = useState<JadwalKegiatan | null>(null)
+  const [selectedJadwalForAlpha, setSelectedJadwalForAlpha] = useState<JadwalKegiatan | null>(null)
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
 
   const { toast } = useToast()
   const supabase = createClient()
-  const { register, handleSubmit, setValue, reset, watch, control, formState: { errors } } = useForm<JadwalFormData>({ resolver: zodResolver(jadwalSchema), defaultValues: { wajib_foto: false } })
+  const { register, handleSubmit, setValue, reset, watch, control, formState: { errors } } = useForm<JadwalFormData>({ 
+    resolver: zodResolver(jadwalSchema), 
+    defaultValues: { wajib_foto: false } 
+  })
   const wajibFoto = watch('wajib_foto')
   const selectedJenis = watch('jenis')
 
@@ -75,39 +78,39 @@ export default function JadwalPage() {
     }
   }
 
-  // ✅ Mark Alpa handler
-  const handleMarkAlpa = async () => {
-    if (!selectedJadwalForAlpa) return
+  // ✅ Mark Alpha handler
+  const handleMarkAlpha = async () => {
+    if (!selectedJadwalForAlpha) return
     
     setMarkAlpaLoading(true)
     try {
       const response = await fetch('/api/attendance/mark-alpa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jadwal_id: selectedJadwalForAlpa.id })
+        body: JSON.stringify({ jadwal_id: selectedJadwalForAlpha.id })
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to mark alpa')
+        throw new Error(data.error || 'Failed to mark alpha')
       }
 
       toast({
         title: 'Success! ✅',
-        description: `${data.alpaCreated} mahasiswa marked as ALPA, ${data.skipped} skipped (sudah hadir/izin/sakit)`,
+        description: `${data.alphaCreated} mahasiswa marked as ALPHA, ${data.skipped} skipped (sudah hadir/izin/alpha)`,
         variant: 'success'
       })
 
-      console.log('Mark Alpa Result:', data)
+      console.log('Mark Alpha Result:', data)
       setMarkAlpaDialogOpen(false)
-      setSelectedJadwalForAlpa(null)
+      setSelectedJadwalForAlpha(null)
       fetchJadwals()
 
     } catch (error) {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to mark alpa',
+        description: error instanceof Error ? error.message : 'Failed to mark alpha',
         variant: 'destructive'
       })
     } finally {
@@ -200,88 +203,123 @@ export default function JadwalPage() {
       <PageHeader title="Jadwal Kegiatan" description="Kelola jadwal ngaji dan kegiatan">
         <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Tambah Jadwal</Button>
       </PageHeader>
+      
       <Card>
         <CardContent className="p-0">
-          {loading ? <div className="space-y-3 p-4">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
-          : jadwals.length === 0 ? <p className="p-6 text-center text-muted-foreground">Belum ada jadwal.</p>
-          : <div className="divide-y">{jadwals.map(j => {
-            const finished = isJadwalFinished(j)
-            
-            return (
-              <div key={j.id} className="flex items-center justify-between p-4">
-                <div className="space-y-1 min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-medium">{j.nama_kegiatan}</p>
-                    <Badge variant="secondary">{formatLabel(j.jenis)}</Badge>
-                    {j.wajib_foto && <Badge variant="info">Foto Wajib</Badge>}
+          {loading ? (
+            <div className="space-y-3 p-4">
+              {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+            </div>
+          ) : jadwals.length === 0 ? (
+            <p className="p-6 text-center text-muted-foreground">Belum ada jadwal.</p>
+          ) : (
+            <div className="divide-y">
+              {jadwals.map(j => {
+                const finished = isJadwalFinished(j)
+                
+                return (
+                  <div key={j.id} className="flex items-center justify-between p-4">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium">{j.nama_kegiatan}</p>
+                        <Badge variant="secondary">{formatLabel(j.jenis)}</Badge>
+                        {j.wajib_foto && <Badge variant="info">Foto Wajib</Badge>}
+                        
+                        {/* ✅ Status badge - finished or ongoing */}
+                        {finished ? (
+                          <Badge variant="destructive" className="text-xs">Selesai</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">Berlangsung</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {formatDate(j.tanggal)} · {j.jam_mulai}–{j.jam_selesai} · {formatLabel(j.target_unit)}
+                      </p>
+                    </div>
                     
-                    {/* ✅ Status badge - finished or ongoing */}
-                    {finished ? (
-                      <Badge variant="destructive" className="text-xs">Selesai</Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs">Berlangsung</Badge>
-                    )}
+                    <div className="flex gap-1 shrink-0">
+                      {/* ✅ Mark Alpha button - only show for finished jadwal */}
+                      {finished && (
+                        <Button 
+                          variant="outline" 
+                          size="icon" 
+                          onClick={() => {
+                            setSelectedJadwalForAlpha(j)
+                            setMarkAlpaDialogOpen(true)
+                          }}
+                          title="Mark mahasiswa as ALPHA"
+                        >
+                          <AlertCircle className="h-4 w-4 text-orange-600" />
+                        </Button>
+                      )}
+                      
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(j)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(j.id)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
                   </div>
-                  <p className="text-sm text-muted-foreground">{formatDate(j.tanggal)} · {j.jam_mulai}–{j.jam_selesai} · {formatLabel(j.target_unit)}</p>
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  {/* ✅ Mark Alpa button - only show for finished jadwal */}
-                  {finished && (
-                    <Button 
-                      variant="outline" 
-                      size="icon" 
-                      onClick={() => {
-                        setSelectedJadwalForAlpa(j)
-                        setMarkAlpaDialogOpen(true)
-                      }}
-                      title="Mark mahasiswa as ALPA"
-                    >
-                      <AlertCircle className="h-4 w-4 text-orange-600" />
-                    </Button>
-                  )}
-                  
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(j)}><Pencil className="h-4 w-4" /></Button>
-                  <Button variant="ghost" size="icon" onClick={() => handleDelete(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                </div>
-              </div>
-            )
-          })}</div>}
+                )
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* ✅ Mark Alpa Dialog - Custom Dialog */}
-      {markAlpaDialogOpen && selectedJadwalForAlpa && (
+      {/* ✅ Mark Alpha Dialog */}
+      {markAlpaDialogOpen && selectedJadwalForAlpha && (
         <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Mark attendance as ALPA?</DialogTitle>
+              <DialogTitle>Mark attendance as ALPHA?</DialogTitle>
             </DialogHeader>
+            
+            {/* ✅ Description for accessibility */}
+            <p className="text-sm text-muted-foreground">
+              Mark all mahasiswa who didn't attend this activity as ALPHA.
+            </p>
+            
             <div className="space-y-4">
               <div className="rounded-lg bg-orange-50 border border-orange-200 p-3 space-y-2">
                 <p className="text-sm font-medium text-orange-900">
-                  {selectedJadwalForAlpa.nama_kegiatan}
+                  {selectedJadwalForAlpha.nama_kegiatan}
                 </p>
                 <p className="text-xs text-orange-700">
-                  {formatDate(selectedJadwalForAlpa.tanggal)} · {selectedJadwalForAlpa.jam_mulai}–{selectedJadwalForAlpa.jam_selesai}
+                  {formatDate(selectedJadwalForAlpha.tanggal)} · {selectedJadwalForAlpha.jam_mulai}–{selectedJadwalForAlpha.jam_selesai}
+                </p>
+                <p className="text-xs text-orange-600">
+                  Target: {formatLabel(selectedJadwalForAlpha.target_unit)}
                 </p>
               </div>
 
               <div className="space-y-2 text-sm">
-                <p className="font-medium">This will set all mahasiswa who didn't attend as ALPA.</p>
-                
-                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 space-y-2">
-                  <p className="text-xs font-medium text-blue-900">Will be skipped:</p>
-                  <ul className="text-xs text-blue-800 space-y-1 ml-4 list-disc">
-                    <li>Mahasiswa with status "Hadir"</li>
-                    <li>Mahasiswa with status "Izin"</li>
-                    <li>Mahasiswa with status "Sakit"</li>
-                  </ul>
-                </div>
-
-                <p className="text-xs text-gray-600">
-                  Only mahasiswa with NO attendance record will be marked as ALPA.
-                </p>
+                <p className="font-medium">Filtering:</p>
+                <ul className="text-xs text-gray-700 space-y-1 ml-4 list-disc">
+                  <li>Only role "mahasiswa"</li>
+                  {selectedJadwalForAlpha.target_unit === 'gabungan' ? (
+                    <>
+                      <li>Unit: Mahad Aly + LKIM</li>
+                    </>
+                  ) : (
+                    <li>Unit: {formatLabel(selectedJadwalForAlpha.target_unit)}</li>
+                  )}
+                </ul>
               </div>
+
+              <div className="space-y-2 text-sm">
+                <p className="font-medium">Will be skipped:</p>
+                <ul className="text-xs text-blue-800 space-y-1 ml-4 list-disc bg-blue-50 border border-blue-200 p-3 rounded">
+                  <li>Mahasiswa with status "Hadir"</li>
+                  <li>Mahasiswa with status "Izin"</li>
+                  <li>Mahasiswa with status "Alpha"</li>
+                </ul>
+              </div>
+
+              <p className="text-xs text-gray-600">
+                Only mahasiswa with NO attendance record will be marked as ALPHA.
+              </p>
 
               <div className="flex gap-3 pt-2">
                 <Button
@@ -289,7 +327,7 @@ export default function JadwalPage() {
                   className="flex-1"
                   onClick={() => {
                     setMarkAlpaDialogOpen(false)
-                    setSelectedJadwalForAlpa(null)
+                    setSelectedJadwalForAlpha(null)
                   }}
                   disabled={markAlpaLoading}
                 >
@@ -297,7 +335,7 @@ export default function JadwalPage() {
                 </Button>
                 <Button
                   className="flex-1"
-                  onClick={handleMarkAlpa}
+                  onClick={handleMarkAlpha}
                   disabled={markAlpaLoading}
                 >
                   {markAlpaLoading ? (
@@ -318,13 +356,17 @@ export default function JadwalPage() {
         </Dialog>
       )}
 
-      {/* Form Dialog - unchanged */}
+      {/* Form Dialog - Create/Edit Jadwal */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{editingJadwal ? 'Edit Jadwal' : 'Tambah Jadwal'}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingJadwal ? 'Edit Jadwal' : 'Tambah Jadwal'}</DialogTitle>
+          </DialogHeader>
+          
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2"><Label>Jenis</Label>
+              <div className="space-y-2">
+                <Label>Jenis</Label>
                 <Controller
                   control={control}
                   name="jenis"
@@ -339,35 +381,58 @@ export default function JadwalPage() {
                       }}
                       value={field.value}
                     >
-                      <SelectTrigger><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
-                      <SelectContent>{JENIS_KEGIATAN_OPTIONS.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}</SelectContent>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih jenis" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {JENIS_KEGIATAN_OPTIONS.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
                     </Select>
                   )}
                 />
               </div>
-              <div className="space-y-2"><Label>Target Unit</Label>
+              
+              <div className="space-y-2">
+                <Label>Target Unit</Label>
                 <Controller
                   control={control}
                   name="target_unit"
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih unit" />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="gabungan">Gabungan</SelectItem>
-                        {UNIT_OPTIONS.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                        {UNIT_OPTIONS.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   )}
                 />
               </div>
             </div>
+
             {selectedJenis === 'ngaji' ? (
               <div className="space-y-2">
                 <Label>Kitab / Nama Kegiatan</Label>
                 <Select onValueChange={handleKitabChange} value={selectedKitab}>
-                  <SelectTrigger><SelectValue placeholder="Pilih kitab" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pilih kitab" />
+                  </SelectTrigger>
                   <SelectContent>
-                    {KITAB_NGAJI_OPTIONS.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                    {KITAB_NGAJI_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 {selectedKitab === 'Lainnya' && (
@@ -382,9 +447,15 @@ export default function JadwalPage() {
               <div className="space-y-2">
                 <Label>Pilih Kegiatan Pengurus</Label>
                 <Select onValueChange={handleKegiatanPengurusChange} value={selectedKegiatanPengurus}>
-                  <SelectTrigger><SelectValue placeholder="Pilih kegiatan" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pilih kegiatan" />
+                  </SelectTrigger>
                   <SelectContent>
-                    {KEGIATAN_PENGURUS_OPTIONS.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                    {KEGIATAN_PENGURUS_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 {selectedKegiatanPengurus === 'Lainnya' && (
@@ -396,18 +467,45 @@ export default function JadwalPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-2"><Label>Nama Kegiatan</Label><Input {...register('nama_kegiatan')} placeholder="Nama kegiatan" /></div>
+              <div className="space-y-2">
+                <Label>Nama Kegiatan</Label>
+                <Input {...register('nama_kegiatan')} placeholder="Nama kegiatan" />
+              </div>
             )}
-            <div className="space-y-2"><Label>Tanggal</Label><Input {...register('tanggal')} type="date" /></div>
+
+            <div className="space-y-2">
+              <Label>Tanggal</Label>
+              <Input {...register('tanggal')} type="date" />
+            </div>
+
             <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-2"><Label>Jam Mulai</Label><Input {...register('jam_mulai')} type="time" /></div>
-              <div className="space-y-2"><Label>Jam Selesai</Label><Input {...register('jam_selesai')} type="time" /></div>
-              <div className="space-y-2"><Label>Batas Absen</Label><Input {...register('batas_absen')} type="time" /></div>
+              <div className="space-y-2">
+                <Label>Jam Mulai</Label>
+                <Input {...register('jam_mulai')} type="time" />
+              </div>
+              <div className="space-y-2">
+                <Label>Jam Selesai</Label>
+                <Input {...register('jam_selesai')} type="time" />
+              </div>
+              <div className="space-y-2">
+                <Label>Batas Absen</Label>
+                <Input {...register('batas_absen')} type="time" />
+              </div>
             </div>
+
             <div className="flex items-center gap-3 rounded-lg border p-3">
-              <input type="checkbox" id="wajib_foto" checked={wajibFoto} onChange={e => setValue('wajib_foto', e.target.checked)} className="h-4 w-4" />
-              <Label htmlFor="wajib_foto" className="cursor-pointer">Wajib Foto Selfie</Label>
+              <input 
+                type="checkbox" 
+                id="wajib_foto" 
+                checked={wajibFoto} 
+                onChange={e => setValue('wajib_foto', e.target.checked)} 
+                className="h-4 w-4" 
+              />
+              <Label htmlFor="wajib_foto" className="cursor-pointer">
+                Wajib Foto Selfie
+              </Label>
             </div>
+
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {editingJadwal ? 'Simpan Perubahan' : 'Tambah Jadwal'}
@@ -418,4 +516,5 @@ export default function JadwalPage() {
     </div>
   )
 }
+
 export const dynamic = 'force-dynamic'
