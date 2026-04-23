@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
     // ✅ Step 4: Filter by target unit
     console.log(`📍 Step 4: Filter by target_unit = '${jadwal.target_unit}'`)
     let targetProfiles = mahasiswa
+    const uniqueUnits = Array.from(new Set(mahasiswa.map(p => p.unit)))
     
     if (jadwal.target_unit === 'gabungan') {
       targetProfiles = mahasiswa.filter(p => p.unit === 'mahad_aly' || p.unit === 'lkim')
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     } else if (jadwal.target_unit === 'mahad_aly') {
       targetProfiles = mahasiswa.filter(p => p.unit === 'mahad_aly')
       console.log(`   mahad_aly: ${targetProfiles.length}`)
-      console.log('   Units in mahasiswa:', [...new Set(mahasiswa.map(p => p.unit))])
+      console.log('   Units in mahasiswa:', uniqueUnits)
     } else if (jadwal.target_unit === 'lkim') {
       targetProfiles = mahasiswa.filter(p => p.unit === 'lkim')
       console.log(`   lkim: ${targetProfiles.length}`)
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
         message: `No mahasiswa found`,
         total: 0,
         mahasiswaCount: mahasiswa.length,
-        unitValues: [...new Set(mahasiswa.map(p => p.unit))]
+        unitValues: uniqueUnits
       })
     }
 
