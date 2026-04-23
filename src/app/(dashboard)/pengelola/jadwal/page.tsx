@@ -269,15 +269,15 @@ export default function JadwalPage() {
       </Card>
 
       {/* ✅ Mark Alpha Dialog */}
-{markAlpaDialogOpen && selectedJadwalForAlpha && (
-  <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
-    <DialogContent className="max-w-md">
-      <DialogHeader>
-        <DialogTitle>Mark attendance as ALPHA?</DialogTitle>
-        <DialogDescription>
-          Mark all mahasiswa who didn't attend this activity as ALPHA
-        </DialogDescription>
-      </DialogHeader>
+      {markAlpaDialogOpen && selectedJadwalForAlpha && (
+        <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Mark attendance as ALPHA?</DialogTitle>
+              <DialogDescription>
+                Mark all mahasiswa who didn't attend this activity as ALPHA
+              </DialogDescription>
+            </DialogHeader>
             
             {/* ✅ Description for accessibility */}
             <p className="text-sm text-muted-foreground">
