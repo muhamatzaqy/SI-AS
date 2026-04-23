@@ -26,7 +26,6 @@ export default function KegiatanPage() {
   const [editingKegiatan, setEditingKegiatan] = useState<JadwalKegiatan | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [namaManual, setNamaManual] = useState('')
-  const [selectedKegiatanPengurus, setSelectedKegiatanPengurus] = useState('')
   
   // ✅ Mark Alpha state
   const [markAlphaDialogOpen, setMarkAlphaDialogOpen] = useState(false)
@@ -35,27 +34,43 @@ export default function KegiatanPage() {
 
   const { toast } = useToast()
   const supabase = createClient()
-  const { register, handleSubmit, setValue, reset, watch, control, formState: { errors } } = useForm<JadwalFormData>({ 
+  const { register, handleSubmit, setValue, reset, watch, control } = useForm<JadwalFormData>({ 
     resolver: zodResolver(jadwalSchema), 
-    defaultValues: { wajib_foto: false } 
+    defaultValues: { wajib_foto: false, jenis: 'kegiatan_pengurus' } 
   })
+  
   const wajibFoto = watch('wajib_foto')
   const selectedJenis = watch('jenis')
+  const nemaKegiatan = watch('nama_kegiatan')
 
   const fetchKegiatan = async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('jadwal_kegiatan')
-      .select('*')
-      .neq('jenis', 'ngaji')
-      .order('tanggal', { ascending: false })
-    setKegiatan(data ?? [])
-    setLoading(false)
+    try {
+      const { data, error } = await supabase
+        .from('jadwal_kegiatan')
+        .select('*')
+        .neq('jenis', 'ngaji')
+        .order('tanggal', { ascending: false })
+      
+      if (error) {
+        console.error('Fetch kegiatan error:', error)
+        toast({
+          title: 'Error',
+          description: `Failed to load kegiatan: ${error.message}`,
+          variant: 'destructive'
+        })
+      } else {
+        setKegiatan(data ?? [])
+      }
+    } catch (err) {
+      console.error('Fetch error:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchKegiatan() }, []) // eslint-disable-line
 
-  // ✅ Check if kegiatan is finished (past jam_selesai)
   const isKegiatanFinished = (k: JadwalKegiatan): boolean => {
     try {
       const now = new Date()
@@ -77,7 +92,6 @@ export default function KegiatanPage() {
     }
   }
 
-  // ✅ Mark Alpha handler
   const handleMarkAlpha = async () => {
     if (!selectedKegiatanForAlpha) return
     
@@ -97,11 +111,10 @@ export default function KegiatanPage() {
 
       toast({
         title: 'Success! ✅',
-        description: `${data.alphaCreated} mahasiswa marked as ALPHA, ${data.skipped} skipped (sudah hadir/izin/alpha)`,
+        description: `${data.alphaCreated} mahasiswa marked as ALPHA, ${data.skipped} skipped`,
         variant: 'success'
       })
 
-      console.log('Mark Alpha Result:', data)
       setMarkAlphaDialogOpen(false)
       setSelectedKegiatanForAlpha(null)
       fetchKegiatan()
@@ -118,11 +131,17 @@ export default function KegiatanPage() {
   }
 
   const checkConflict = async (tanggal: string, jamMulai: string, jamSelesai: string, excludeId?: string) => {
-    const { data: ngajiJadwal } = await supabase
+    const { data: ngajiJadwal, error } = await supabase
       .from('jadwal_kegiatan')
       .select('*')
       .eq('jenis', 'ngaji')
       .eq('tanggal', tanggal)
+    
+    if (error) {
+      console.error('Check conflict error:', error)
+      return false
+    }
+
     return (ngajiJadwal ?? []).some((j: any) => {
       if (excludeId && j.id === excludeId) return false
       return !(jamSelesai <= j.jam_mulai || jamMulai >= j.jam_selesai)
@@ -142,50 +161,77 @@ export default function KegiatanPage() {
         setSubmitting(false)
         return
       }
-      const payload = { ...data, batas_absen: data.batas_absen || null, updated_at: new Date().toISOString() }
+
+      const payload = { 
+        ...data, 
+        batas_absen: data.batas_absen || null, 
+        updated_at: new Date().toISOString() 
+      }
+
       if (editingKegiatan) {
-        const { error } = await supabase.from('jadwal_kegiatan').update(payload).eq('id', editingKegiatan.id)
+        const { error } = await supabase
+          .from('jadwal_kegiatan')
+          .update(payload)
+          .eq('id', editingKegiatan.id)
         if (error) throw error
       } else {
         const { data: { user } } = await supabase.auth.getUser()
-        const { error } = await supabase.from('jadwal_kegiatan').insert({ ...payload, created_by: user?.id })
+        const { error } = await supabase
+          .from('jadwal_kegiatan')
+          .insert({ ...payload, created_by: user?.id })
         if (error) throw error
       }
-      toast({ title: 'Berhasil', description: 'Kegiatan tersimpan', variant: 'success' })
+
+      toast({ 
+        title: 'Berhasil', 
+        description: 'Kegiatan tersimpan', 
+        variant: 'success' 
+      })
       setDialogOpen(false)
+      reset()
       fetchKegiatan()
-    } catch {
-      toast({ title: 'Error', description: 'Gagal menyimpan', variant: 'destructive' })
+    } catch (err) {
+      console.error('Submit error:', err)
+      toast({ 
+        title: 'Error', 
+        description: err instanceof Error ? err.message : 'Gagal menyimpan',
+        variant: 'destructive' 
+      })
+    } finally {
+      setSubmitting(false)
     }
-    finally { setSubmitting(false) }
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Yakin hapus kegiatan ini?')) return
-    await supabase.from('jadwal_kegiatan').delete().eq('id', id)
-    fetchKegiatan()
-    toast({ title: 'Berhasil', description: 'Kegiatan dihapus', variant: 'success' })
+    try {
+      const { error } = await supabase.from('jadwal_kegiatan').delete().eq('id', id)
+      if (error) throw error
+      fetchKegiatan()
+      toast({ 
+        title: 'Berhasil', 
+        description: 'Kegiatan dihapus', 
+        variant: 'success' 
+      })
+    } catch (err) {
+      toast({ 
+        title: 'Error', 
+        description: 'Gagal hapus',
+        variant: 'destructive' 
+      })
+    }
   }
 
   const openCreate = () => {
     setEditingKegiatan(null)
-    setSelectedKegiatanPengurus('')
     setNamaManual('')
-    reset({ wajib_foto: false })
+    reset({ wajib_foto: false, jenis: 'kegiatan_pengurus' })
     setDialogOpen(true)
   }
 
   const openEdit = (k: JadwalKegiatan) => {
     setEditingKegiatan(k)
     setNamaManual('')
-    
-    if (k.jenis === 'kegiatan_pengurus') {
-      const isKnownKegiatan = KEGIATAN_PENGURUS_OPTIONS.some(opt => opt.value === k.nama_kegiatan)
-      setSelectedKegiatanPengurus(isKnownKegiatan ? k.nama_kegiatan : 'Lainnya')
-      if (!isKnownKegiatan) setNamaManual(k.nama_kegiatan)
-    } else {
-      setSelectedKegiatanPengurus('')
-    }
     
     reset({
       nama_kegiatan: k.nama_kegiatan,
@@ -198,16 +244,6 @@ export default function KegiatanPage() {
       wajib_foto: k.wajib_foto
     })
     setDialogOpen(true)
-  }
-
-  const handleKegiatanPengurusChange = (val: string) => {
-    setSelectedKegiatanPengurus(val)
-    if (val !== 'Lainnya') {
-      setValue('nama_kegiatan', val)
-      setNamaManual('')
-    } else {
-      setValue('nama_kegiatan', namaManual)
-    }
   }
 
   const handleNamaManualChange = (val: string) => {
@@ -317,9 +353,7 @@ export default function KegiatanPage() {
                 <ul className="text-xs text-gray-700 space-y-1 ml-4 list-disc">
                   <li>Only role "mahasiswa"</li>
                   {selectedKegiatanForAlpha.target_unit === 'gabungan' ? (
-                    <>
-                      <li>Unit: Ma'had Aly + LKIM</li>
-                    </>
+                    <li>Unit: Ma'had Aly + LKIM</li>
                   ) : (
                     <li>Unit: {formatLabel(selectedKegiatanForAlpha.target_unit)}</li>
                   )}
@@ -334,10 +368,6 @@ export default function KegiatanPage() {
                   <li>Mahasiswa with status "Alpha"</li>
                 </ul>
               </div>
-
-              <p className="text-xs text-gray-600">
-                Only mahasiswa with NO attendance record will be marked as ALPHA.
-              </p>
 
               <div className="flex gap-3 pt-2">
                 <Button
@@ -379,6 +409,9 @@ export default function KegiatanPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingKegiatan ? 'Edit Kegiatan' : 'Tambah Kegiatan'}</DialogTitle>
+            <DialogDescription>
+              {editingKegiatan ? 'Update kegiatan yang sudah ada' : 'Buat kegiatan baru'}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -392,11 +425,10 @@ export default function KegiatanPage() {
                     <Select
                       onValueChange={(v) => {
                         field.onChange(v)
-                        setSelectedKegiatanPengurus('')
                         setNamaManual('')
                         setValue('nama_kegiatan', '')
                       }}
-                      value={field.value}
+                      value={field.value || 'kegiatan_pengurus'}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Pilih jenis" />
@@ -419,7 +451,7 @@ export default function KegiatanPage() {
                   control={control}
                   name="target_unit"
                   render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || 'gabungan'}>
                       <SelectTrigger>
                         <SelectValue placeholder="Pilih unit" />
                       </SelectTrigger>
@@ -440,23 +472,43 @@ export default function KegiatanPage() {
             {selectedJenis === 'kegiatan_pengurus' ? (
               <div className="space-y-2">
                 <Label>Pilih Kegiatan Pengurus</Label>
-                <Select onValueChange={handleKegiatanPengurusChange} value={selectedKegiatanPengurus}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Pilih kegiatan" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {KEGIATAN_PENGURUS_OPTIONS.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedKegiatanPengurus === 'Lainnya' && (
+                <Controller
+                  control={control}
+                  name="nama_kegiatan"
+                  render={({ field }) => (
+                    <Select
+                      onValueChange={(v) => {
+                        if (v !== 'Lainnya') {
+                          field.onChange(v)
+                          setNamaManual('')
+                        } else {
+                          setNamaManual('')
+                          field.onChange('')
+                        }
+                      }}
+                      value={field.value || ''}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih kegiatan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {KEGIATAN_PENGURUS_OPTIONS.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                {!KEGIATAN_PENGURUS_OPTIONS.some(o => o.value === nemaKegiatan) && nemaKegiatan && (
+                  <p className="text-xs text-gray-500">Custom: {nemaKegiatan}</p>
+                )}
+                {(!nemaKegiatan || !KEGIATAN_PENGURUS_OPTIONS.some(o => o.value === nemaKegiatan)) && (
                   <Input
                     value={namaManual}
                     onChange={e => handleNamaManualChange(e.target.value)}
-                    placeholder="Tulis nama kegiatan..."
+                    placeholder="Atau tulis nama kegiatan custom..."
                   />
                 )}
               </div>
