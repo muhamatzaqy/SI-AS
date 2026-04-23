@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
@@ -269,12 +269,15 @@ export default function JadwalPage() {
       </Card>
 
       {/* ✅ Mark Alpha Dialog */}
-      {markAlpaDialogOpen && selectedJadwalForAlpha && (
-        <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Mark attendance as ALPHA?</DialogTitle>
-            </DialogHeader>
+{markAlpaDialogOpen && selectedJadwalForAlpha && (
+  <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
+    <DialogContent className="max-w-md">
+      <DialogHeader>
+        <DialogTitle>Mark attendance as ALPHA?</DialogTitle>
+        <DialogDescription>
+          Mark all mahasiswa who didn't attend this activity as ALPHA
+        </DialogDescription>
+      </DialogHeader>
             
             {/* ✅ Description for accessibility */}
             <p className="text-sm text-muted-foreground">
