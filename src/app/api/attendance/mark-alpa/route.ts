@@ -32,33 +32,39 @@ export async function POST(req: NextRequest) {
     console.log('✅ Jadwal found:', jadwal.nama_kegiatan)
     console.log('   Target unit:', jadwal.target_unit)
 
-    // ✅ Get ALL profiles
+    // ✅ Get ALL profiles with role='mahasiswa' ONLY
     const { data: profiles, error: profileError } = await supabase
       .from('profiles')
       .select('id, nama, unit, role')
+      .eq('role', 'mahasiswa') // ✅ Only mahasiswa!
 
     if (profileError) {
       console.error('❌ Error fetching profiles:', profileError)
       throw new Error(`Failed to fetch profiles: ${profileError.message}`)
     }
 
-    console.log(`📋 Found ${profiles?.length || 0} total profiles`)
+    console.log(`📋 Found ${profiles?.length || 0} mahasiswa profiles`)
 
     // ✅ Filter profiles based on jadwal target_unit
     let targetProfiles = profiles || []
     
     if (jadwal.target_unit === 'gabungan') {
-      console.log('   ✅ Including ALL profiles (gabungan target)')
+      // ✅ 'gabungan' = both mahad_aly AND lkim
+      targetProfiles = targetProfiles.filter(p => 
+        p.unit === 'mahad_aly' || p.unit === 'lkim'
+      )
+      console.log(`   ✅ Gabungan: Including mahad_aly (${targetProfiles.filter(p => p.unit === 'mahad_aly').length}) + lkim (${targetProfiles.filter(p => p.unit === 'lkim').length})`)
     } else {
+      // ✅ Specific unit
       targetProfiles = targetProfiles.filter(p => p.unit === jadwal.target_unit)
-      console.log(`   ✅ Filtered to ${targetProfiles.length} profiles for unit: ${jadwal.target_unit}`)
+      console.log(`   ✅ Unit ${jadwal.target_unit}: ${targetProfiles.length} mahasiswa`)
     }
 
     if (targetProfiles.length === 0) {
-      console.warn(`⚠️ No profiles found for target_unit: ${jadwal.target_unit}`)
+      console.warn(`⚠️ No mahasiswa found for target_unit: ${jadwal.target_unit}`)
       return NextResponse.json({
         success: false,
-        message: `No profiles found for target_unit: ${jadwal.target_unit}`,
+        message: `No mahasiswa found for target_unit: ${jadwal.target_unit}`,
         jadwal_nama: jadwal.nama_kegiatan,
         target_unit: jadwal.target_unit,
         alphaCreated: 0,
@@ -73,9 +79,9 @@ export async function POST(req: NextRequest) {
     let errorCount = 0
     const results: any[] = []
 
-    console.log(`🔄 Processing ${targetProfiles.length} profiles...`)
+    console.log(`🔄 Processing ${targetProfiles.length} mahasiswa...`)
 
-    // ✅ For each profile, check and set alpha if needed
+    // ✅ For each mahasiswa, check and set alpha if needed
     for (const profile of targetProfiles) {
       try {
         // Check if presensi record exists
@@ -93,14 +99,15 @@ export async function POST(req: NextRequest) {
         // If record exists, check status
         if (presensi) {
           // Record exists - check status
-          // ✅ Only allow: hadir, izin, alpha (from DB constraint)
+          // ✅ Valid statuses from DB: hadir, izin, alpha
           const validStatuses = ['hadir', 'izin', 'alpha']
           
           if (validStatuses.includes(presensi.status)) {
-            console.log(`   ⏭️ Skip ${profile.nama} - already has status: ${presensi.status}`)
+            console.log(`   ⏭️ Skip ${profile.nama} (${profile.unit}) - status: ${presensi.status}`)
             skippedCount++
             results.push({
               mahasiswa_nama: profile.nama,
+              unit: profile.unit,
               status: 'skipped',
               reason: `Already has status: ${presensi.status}`
             })
@@ -108,8 +115,8 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // No record exists or needs update - create/update ALPHA record
-        console.log(`   📝 Setting ALPHA for ${profile.nama}`)
+        // No record exists - create ALPHA record
+        console.log(`   📝 Setting ALPHA for ${profile.nama} (${profile.unit})`)
         
         const { error: upsertError } = await supabase
           .from('presensi')
@@ -117,7 +124,7 @@ export async function POST(req: NextRequest) {
             {
               mahasiswa_id: profile.id,
               jadwal_id: jadwal_id,
-              status: 'alpha', // ✅ Only valid status: hadir, izin, alpha
+              status: 'alpha',
               waktu_absen: now.toISOString(),
               foto_url: null,
               latitude: null,
@@ -133,6 +140,7 @@ export async function POST(req: NextRequest) {
           errorCount++
           results.push({
             mahasiswa_nama: profile.nama,
+            unit: profile.unit,
             status: 'error',
             reason: upsertError.message
           })
@@ -141,6 +149,7 @@ export async function POST(req: NextRequest) {
           alphaCount++
           results.push({
             mahasiswa_nama: profile.nama,
+            unit: profile.unit,
             status: 'alpha_set',
             reason: 'No attendance record'
           })
@@ -155,14 +164,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: alphaCount > 0 || skippedCount > 0,
-      message: `Successfully set ${alphaCount} profiles as ALPHA for "${jadwal.nama_kegiatan}". ${skippedCount} already have attendance records.`,
+      message: `Successfully set ${alphaCount} mahasiswa as ALPHA for "${jadwal.nama_kegiatan}". ${skippedCount} already have attendance records.`,
       jadwal_nama: jadwal.nama_kegiatan,
       target_unit: jadwal.target_unit,
       alphaCreated: alphaCount,
       skipped: skippedCount,
       errors: errorCount,
       total: targetProfiles.length,
-      details: results.slice(0, 20)
+      details: results.slice(0, 30)
     })
 
   } catch (error) {
