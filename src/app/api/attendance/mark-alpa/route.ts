@@ -36,14 +36,14 @@ export async function POST(req: NextRequest) {
     const { data: profiles, error: profileError } = await supabase
       .from('profiles')
       .select('id, nama, unit, role')
-      .eq('role', 'mahasiswa') // ✅ Only mahasiswa!
+      .eq('role', 'mahasiswa')
 
     if (profileError) {
       console.error('❌ Error fetching profiles:', profileError)
       throw new Error(`Failed to fetch profiles: ${profileError.message}`)
     }
 
-    console.log(`📋 Found ${profiles?.length || 0} mahasiswa profiles`)
+    console.log(`📋 Found ${profiles?.length || 0} mahasiswa profiles (role='mahasiswa')`)
 
     // ✅ Filter profiles based on jadwal target_unit
     let targetProfiles = profiles || []
@@ -53,11 +53,15 @@ export async function POST(req: NextRequest) {
       targetProfiles = targetProfiles.filter(p => 
         p.unit === 'mahad_aly' || p.unit === 'lkim'
       )
-      console.log(`   ✅ Gabungan: Including mahad_aly (${targetProfiles.filter(p => p.unit === 'mahad_aly').length}) + lkim (${targetProfiles.filter(p => p.unit === 'lkim').length})`)
-    } else {
+      const mahad_aly_count = targetProfiles.filter(p => p.unit === 'mahad_aly').length
+      const lkim_count = targetProfiles.filter(p => p.unit === 'lkim').length
+      console.log(`   ✅ Gabungan target: mahad_aly (${mahad_aly_count}) + lkim (${lkim_count}) = ${targetProfiles.length} total`)
+    } else if (jadwal.target_unit === 'mahad_aly' || jadwal.target_unit === 'lkim') {
       // ✅ Specific unit
       targetProfiles = targetProfiles.filter(p => p.unit === jadwal.target_unit)
-      console.log(`   ✅ Unit ${jadwal.target_unit}: ${targetProfiles.length} mahasiswa`)
+      console.log(`   ✅ Unit filter (${jadwal.target_unit}): ${targetProfiles.length} mahasiswa`)
+    } else {
+      console.warn(`⚠️ Unknown target_unit: ${jadwal.target_unit}`)
     }
 
     if (targetProfiles.length === 0) {
@@ -69,6 +73,7 @@ export async function POST(req: NextRequest) {
         target_unit: jadwal.target_unit,
         alphaCreated: 0,
         skipped: 0,
+        errors: 0,
         total: 0,
         details: []
       })
