@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     const supabase = createClient()
     const now = new Date()
 
-    console.log('📝 Mark Alpa Request for jadwal_id:', jadwal_id)
+    console.log('📝 Mark Alpha Request for jadwal_id:', jadwal_id)
 
     // ✅ Get jadwal details
     const { data: jadwal, error: jadwalError } = await supabase
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     console.log('✅ Jadwal found:', jadwal.nama_kegiatan)
     console.log('   Target unit:', jadwal.target_unit)
 
-    // ✅ Get ALL profiles (no unit filter - let logic handle it)
+    // ✅ Get ALL profiles
     const { data: profiles, error: profileError } = await supabase
       .from('profiles')
       .select('id, nama, unit, role')
@@ -48,36 +48,34 @@ export async function POST(req: NextRequest) {
     let targetProfiles = profiles || []
     
     if (jadwal.target_unit === 'gabungan') {
-      // For 'gabungan', include ALL profiles
-      console.log('   Including ALL profiles (gabungan target)')
+      console.log('   ✅ Including ALL profiles (gabungan target)')
     } else {
-      // For specific unit, filter by exact match
       targetProfiles = targetProfiles.filter(p => p.unit === jadwal.target_unit)
-      console.log(`   Filtered to ${targetProfiles.length} profiles for unit: ${jadwal.target_unit}`)
+      console.log(`   ✅ Filtered to ${targetProfiles.length} profiles for unit: ${jadwal.target_unit}`)
     }
 
     if (targetProfiles.length === 0) {
-      console.warn(`⚠️ No mahasiswa found for target_unit: ${jadwal.target_unit}`)
+      console.warn(`⚠️ No profiles found for target_unit: ${jadwal.target_unit}`)
       return NextResponse.json({
         success: false,
-        message: `No mahasiswa found for target_unit: ${jadwal.target_unit}`,
+        message: `No profiles found for target_unit: ${jadwal.target_unit}`,
         jadwal_nama: jadwal.nama_kegiatan,
         target_unit: jadwal.target_unit,
-        alpaCreated: 0,
+        alphaCreated: 0,
         skipped: 0,
         total: 0,
         details: []
       })
     }
 
-    let alpaCount = 0
+    let alphaCount = 0
     let skippedCount = 0
     let errorCount = 0
     const results: any[] = []
 
     console.log(`🔄 Processing ${targetProfiles.length} profiles...`)
 
-    // ✅ For each mahasiswa, check and set alpa if needed
+    // ✅ For each profile, check and set alpha if needed
     for (const profile of targetProfiles) {
       try {
         // Check if presensi record exists
@@ -89,16 +87,16 @@ export async function POST(req: NextRequest) {
           .maybeSingle()
 
         if (presensiError && presensiError.code !== 'PGRST116') {
-          // Real error (not "no rows")
           throw presensiError
         }
 
         // If record exists, check status
         if (presensi) {
           // Record exists - check status
-          const validStatuses = ['alpa', 'izin', 'sakit', 'hadir']
+          // ✅ Only allow: hadir, izin, alpha (from DB constraint)
+          const validStatuses = ['hadir', 'izin', 'alpha']
+          
           if (validStatuses.includes(presensi.status)) {
-            // Already has valid status - skip
             console.log(`   ⏭️ Skip ${profile.nama} - already has status: ${presensi.status}`)
             skippedCount++
             results.push({
@@ -110,54 +108,40 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // No record exists - create ALPA record
-        console.log(`   📝 Creating ALPA for ${profile.nama} (${profile.unit})`)
+        // No record exists or needs update - create/update ALPHA record
+        console.log(`   📝 Setting ALPHA for ${profile.nama}`)
+        
         const { error: upsertError } = await supabase
           .from('presensi')
-          .insert({
-            mahasiswa_id: profile.id,
-            jadwal_id: jadwal_id,
-            status: 'alpa',
-            waktu_absen: now.toISOString(),
-            foto_url: null,
-            latitude: null,
-            longitude: null
-          })
+          .upsert(
+            {
+              mahasiswa_id: profile.id,
+              jadwal_id: jadwal_id,
+              status: 'alpha', // ✅ Only valid status: hadir, izin, alpha
+              waktu_absen: now.toISOString(),
+              foto_url: null,
+              latitude: null,
+              longitude: null
+            },
+            {
+              onConflict: 'mahasiswa_id,jadwal_id'
+            }
+          )
 
         if (upsertError) {
-          // If unique constraint error, try update instead
-          if (upsertError.code === '23505') {
-            const { error: updateError } = await supabase
-              .from('presensi')
-              .update({
-                status: 'alpa',
-                waktu_absen: now.toISOString()
-              })
-              .eq('jadwal_id', jadwal_id)
-              .eq('mahasiswa_id', profile.id)
-
-            if (updateError) {
-              console.error(`   ❌ Update error for ${profile.nama}:`, updateError)
-              errorCount++
-            } else {
-              console.log(`   ✅ Updated ALPA for ${profile.nama}`)
-              alpaCount++
-            }
-          } else {
-            console.error(`   ❌ Error for ${profile.nama}:`, upsertError)
-            errorCount++
-            results.push({
-              mahasiswa_nama: profile.nama,
-              status: 'error',
-              reason: upsertError.message
-            })
-          }
-        } else {
-          console.log(`   ✅ Created ALPA for ${profile.nama}`)
-          alpaCount++
+          console.error(`   ❌ Error for ${profile.nama}:`, upsertError)
+          errorCount++
           results.push({
             mahasiswa_nama: profile.nama,
-            status: 'alpa_set',
+            status: 'error',
+            reason: upsertError.message
+          })
+        } else {
+          console.log(`   ✅ Alpha set for ${profile.nama}`)
+          alphaCount++
+          results.push({
+            mahasiswa_nama: profile.nama,
+            status: 'alpha_set',
             reason: 'No attendance record'
           })
         }
@@ -167,14 +151,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.log(`✅ Completed. ALPA: ${alpaCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`)
+    console.log(`✅ Completed. ALPHA: ${alphaCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`)
 
     return NextResponse.json({
-      success: alpaCount > 0,
-      message: `Successfully set ${alpaCount} mahasiswa as ALPA for "${jadwal.nama_kegiatan}"`,
+      success: alphaCount > 0 || skippedCount > 0,
+      message: `Successfully set ${alphaCount} profiles as ALPHA for "${jadwal.nama_kegiatan}". ${skippedCount} already have attendance records.`,
       jadwal_nama: jadwal.nama_kegiatan,
       target_unit: jadwal.target_unit,
-      alpaCreated: alpaCount,
+      alphaCreated: alphaCount,
       skipped: skippedCount,
       errors: errorCount,
       total: targetProfiles.length,
@@ -182,7 +166,7 @@ export async function POST(req: NextRequest) {
     })
 
   } catch (error) {
-    console.error('❌ Mark Alpa Error:', error)
+    console.error('❌ Mark Alpha Error:', error)
     return NextResponse.json(
       { 
         error: error instanceof Error ? error.message : 'Unknown error',
