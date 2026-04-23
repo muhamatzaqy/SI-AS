@@ -32,43 +32,37 @@ export async function POST(req: NextRequest) {
     console.log('✅ Jadwal found:', jadwal.nama_kegiatan)
     console.log('   Target unit:', jadwal.target_unit)
 
-    // ✅ Get all mahasiswa - IMPROVED QUERY
-    // Get profiles where role is mahasiswa OR where unit matches jadwal target_unit
-    let profileQuery = supabase
+    // ✅ Get ALL profiles (no unit filter - let logic handle it)
+    const { data: profiles, error: profileError } = await supabase
       .from('profiles')
       .select('id, nama, unit, role')
 
-    // Filter by target_unit if jadwal is for specific unit
-    if (jadwal.target_unit !== 'gabungan') {
-      profileQuery = profileQuery.or(`unit.eq.${jadwal.target_unit},role.eq.mahasiswa`)
-    } else {
-      // For 'gabungan', get all with role mahasiswa or all units
-      profileQuery = profileQuery.eq('role', 'mahasiswa')
-    }
-
-    const { data: profiles, error: profileError } = await profileQuery
-
     if (profileError) {
-      console.error('❌ Error fetching mahasiswa:', profileError)
-      throw new Error(`Failed to fetch mahasiswa: ${profileError.message}`)
+      console.error('❌ Error fetching profiles:', profileError)
+      throw new Error(`Failed to fetch profiles: ${profileError.message}`)
     }
 
-    console.log(`📋 Found ${profiles?.length || 0} mahasiswa`)
-    if (profiles && profiles.length > 0) {
-      console.log('   Sample profiles:', profiles.slice(0, 3).map(p => ({ id: p.id, nama: p.nama, unit: p.unit })))
+    console.log(`📋 Found ${profiles?.length || 0} total profiles`)
+
+    // ✅ Filter profiles based on jadwal target_unit
+    let targetProfiles = profiles || []
+    
+    if (jadwal.target_unit === 'gabungan') {
+      // For 'gabungan', include ALL profiles
+      console.log('   Including ALL profiles (gabungan target)')
+    } else {
+      // For specific unit, filter by exact match
+      targetProfiles = targetProfiles.filter(p => p.unit === jadwal.target_unit)
+      console.log(`   Filtered to ${targetProfiles.length} profiles for unit: ${jadwal.target_unit}`)
     }
 
-    let alpaCount = 0
-    let skippedCount = 0
-    let errorCount = 0
-    const results: any[] = []
-
-    if (!profiles || profiles.length === 0) {
-      console.warn('⚠️ No mahasiswa found for this jadwal')
+    if (targetProfiles.length === 0) {
+      console.warn(`⚠️ No mahasiswa found for target_unit: ${jadwal.target_unit}`)
       return NextResponse.json({
         success: false,
-        message: 'No mahasiswa found for this jadwal',
+        message: `No mahasiswa found for target_unit: ${jadwal.target_unit}`,
         jadwal_nama: jadwal.nama_kegiatan,
+        target_unit: jadwal.target_unit,
         alpaCreated: 0,
         skipped: 0,
         total: 0,
@@ -76,22 +70,36 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    let alpaCount = 0
+    let skippedCount = 0
+    let errorCount = 0
+    const results: any[] = []
+
+    console.log(`🔄 Processing ${targetProfiles.length} profiles...`)
+
     // ✅ For each mahasiswa, check and set alpa if needed
-    for (const profile of profiles) {
+    for (const profile of targetProfiles) {
       try {
+        // Check if presensi record exists
         const { data: presensi, error: presensiError } = await supabase
           .from('presensi')
           .select('id, status')
           .eq('jadwal_id', jadwal_id)
           .eq('mahasiswa_id', profile.id)
-          .maybeSingle() // ✅ Use maybeSingle instead of single for flexibility
+          .maybeSingle()
+
+        if (presensiError && presensiError.code !== 'PGRST116') {
+          // Real error (not "no rows")
+          throw presensiError
+        }
 
         // If record exists, check status
         if (presensi) {
           // Record exists - check status
-          if (presensi.status === 'alpa' || presensi.status === 'izin' || presensi.status === 'sakit' || presensi.status === 'hadir') {
+          const validStatuses = ['alpa', 'izin', 'sakit', 'hadir']
+          if (validStatuses.includes(presensi.status)) {
             // Already has valid status - skip
-            console.log(`   ⏭️ Skip ${profile.nama} - status: ${presensi.status}`)
+            console.log(`   ⏭️ Skip ${profile.nama} - already has status: ${presensi.status}`)
             skippedCount++
             results.push({
               mahasiswa_nama: profile.nama,
@@ -102,31 +110,50 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // No record or need to create - set alpa
+        // No record exists - create ALPA record
+        console.log(`   📝 Creating ALPA for ${profile.nama} (${profile.unit})`)
         const { error: upsertError } = await supabase
           .from('presensi')
-          .upsert({
+          .insert({
             mahasiswa_id: profile.id,
             jadwal_id: jadwal_id,
-            status: 'alpa', // ✅ Using 'alpa' (matches DB)
+            status: 'alpa',
             waktu_absen: now.toISOString(),
             foto_url: null,
             latitude: null,
             longitude: null
-          }, {
-            onConflict: 'mahasiswa_id,jadwal_id'
           })
 
         if (upsertError) {
-          console.error(`   ❌ Error for ${profile.nama}:`, upsertError)
-          errorCount++
-          results.push({
-            mahasiswa_nama: profile.nama,
-            status: 'error',
-            reason: upsertError.message
-          })
+          // If unique constraint error, try update instead
+          if (upsertError.code === '23505') {
+            const { error: updateError } = await supabase
+              .from('presensi')
+              .update({
+                status: 'alpa',
+                waktu_absen: now.toISOString()
+              })
+              .eq('jadwal_id', jadwal_id)
+              .eq('mahasiswa_id', profile.id)
+
+            if (updateError) {
+              console.error(`   ❌ Update error for ${profile.nama}:`, updateError)
+              errorCount++
+            } else {
+              console.log(`   ✅ Updated ALPA for ${profile.nama}`)
+              alpaCount++
+            }
+          } else {
+            console.error(`   ❌ Error for ${profile.nama}:`, upsertError)
+            errorCount++
+            results.push({
+              mahasiswa_nama: profile.nama,
+              status: 'error',
+              reason: upsertError.message
+            })
+          }
         } else {
-          console.log(`   ✅ ALPA set for ${profile.nama}`)
+          console.log(`   ✅ Created ALPA for ${profile.nama}`)
           alpaCount++
           results.push({
             mahasiswa_nama: profile.nama,
@@ -135,7 +162,7 @@ export async function POST(req: NextRequest) {
           })
         }
       } catch (profileError) {
-        console.error(`   ❌ Error processing ${profile.nama}:`, profileError)
+        console.error(`   ❌ Exception for ${profile.nama}:`, profileError)
         errorCount++
       }
     }
@@ -143,14 +170,15 @@ export async function POST(req: NextRequest) {
     console.log(`✅ Completed. ALPA: ${alpaCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`)
 
     return NextResponse.json({
-      success: true,
+      success: alpaCount > 0,
       message: `Successfully set ${alpaCount} mahasiswa as ALPA for "${jadwal.nama_kegiatan}"`,
       jadwal_nama: jadwal.nama_kegiatan,
+      target_unit: jadwal.target_unit,
       alpaCreated: alpaCount,
       skipped: skippedCount,
       errors: errorCount,
-      total: profiles?.length || 0,
-      details: results.slice(0, 10) // Return first 10 for brevity
+      total: targetProfiles.length,
+      details: results.slice(0, 20)
     })
 
   } catch (error) {
