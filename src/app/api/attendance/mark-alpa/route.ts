@@ -32,34 +32,35 @@ export async function POST(req: NextRequest) {
     console.log('✅ Jadwal found:', jadwal.nama_kegiatan)
     console.log('   Target unit:', jadwal.target_unit)
 
-    // ✅ Get ALL profiles with role='mahasiswa' ONLY
+    // ✅ Get ALL profiles (no filter yet)
     const { data: profiles, error: profileError } = await supabase
       .from('profiles')
       .select('id, nama, unit, role')
-      .eq('role', 'mahasiswa')
 
     if (profileError) {
       console.error('❌ Error fetching profiles:', profileError)
       throw new Error(`Failed to fetch profiles: ${profileError.message}`)
     }
 
-    console.log(`📋 Found ${profiles?.length || 0} mahasiswa profiles (role='mahasiswa')`)
+    console.log(`📋 Found ${profiles?.length || 0} total profiles`)
 
-    // ✅ Filter profiles based on jadwal target_unit
-    let targetProfiles = profiles || []
+    // ✅ Filter in JavaScript for better control
+    let filteredProfiles = profiles?.filter(p => p.role === 'mahasiswa') || []
+    console.log(`📋 After role filter (role='mahasiswa'): ${filteredProfiles.length}`)
+
+    // ✅ Filter by target_unit
+    let targetProfiles = filteredProfiles
     
     if (jadwal.target_unit === 'gabungan') {
-      // ✅ 'gabungan' = both mahad_aly AND lkim
       targetProfiles = targetProfiles.filter(p => 
         p.unit === 'mahad_aly' || p.unit === 'lkim'
       )
       const mahad_aly_count = targetProfiles.filter(p => p.unit === 'mahad_aly').length
       const lkim_count = targetProfiles.filter(p => p.unit === 'lkim').length
-      console.log(`   ✅ Gabungan target: mahad_aly (${mahad_aly_count}) + lkim (${lkim_count}) = ${targetProfiles.length} total`)
+      console.log(`   ✅ Gabungan: mahad_aly (${mahad_aly_count}) + lkim (${lkim_count}) = ${targetProfiles.length} mahasiswa`)
     } else if (jadwal.target_unit === 'mahad_aly' || jadwal.target_unit === 'lkim') {
-      // ✅ Specific unit
       targetProfiles = targetProfiles.filter(p => p.unit === jadwal.target_unit)
-      console.log(`   ✅ Unit filter (${jadwal.target_unit}): ${targetProfiles.length} mahasiswa`)
+      console.log(`   ✅ Unit ${jadwal.target_unit}: ${targetProfiles.length} mahasiswa`)
     } else {
       console.warn(`⚠️ Unknown target_unit: ${jadwal.target_unit}`)
     }
@@ -103,8 +104,6 @@ export async function POST(req: NextRequest) {
 
         // If record exists, check status
         if (presensi) {
-          // Record exists - check status
-          // ✅ Valid statuses from DB: hadir, izin, alpha
           const validStatuses = ['hadir', 'izin', 'alpha']
           
           if (validStatuses.includes(presensi.status)) {
