@@ -16,8 +16,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { JENIS_KEGIATAN_OPTIONS, UNIT_OPTIONS, KITAB_NGAJI_OPTIONS, KEGIATAN_PENGURUS_OPTIONS } from '@/lib/constants'
-import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, AlertCircle } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 export default function JadwalPage() {
   const [jadwals, setJadwals] = useState<JadwalKegiatan[]>([])
@@ -28,6 +37,12 @@ export default function JadwalPage() {
   const [namaManual, setNamaManual] = useState('')
   const [selectedKitab, setSelectedKitab] = useState('')
   const [selectedKegiatanPengurus, setSelectedKegiatanPengurus] = useState('')
+  
+  // ✅ New state for Mark Alpa
+  const [markAlpaOpen, setMarkAlpaOpen] = useState(false)
+  const [selectedJadwalForAlpa, setSelectedJadwalForAlpa] = useState<JadwalKegiatan | null>(null)
+  const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
+
   const { toast } = useToast()
   const supabase = createClient()
   const { register, handleSubmit, setValue, reset, watch, control, formState: { errors } } = useForm<JadwalFormData>({ resolver: zodResolver(jadwalSchema), defaultValues: { wajib_foto: false } })
@@ -42,6 +57,72 @@ export default function JadwalPage() {
   }
 
   useEffect(() => { fetchJadwals() }, []) // eslint-disable-line
+
+  // ✅ Check if jadwal is finished (past jam_selesai)
+  const isJadwalFinished = (jadwal: JadwalKegiatan): boolean => {
+    try {
+      const now = new Date()
+      const jadwalDate = new Date(jadwal.tanggal)
+      
+      // If jadwal is in the future, it's not finished
+      if (jadwalDate > now) return false
+      
+      // If jadwal is today, check if past jam_selesai
+      if (jadwalDate.toDateString() === now.toDateString()) {
+        const [hour, min] = jadwal.jam_selesai.split(':').map(Number)
+        const jamSelesaiDate = new Date(now)
+        jamSelesaiDate.setHours(hour, min, 0, 0)
+        
+        return now > jamSelesaiDate
+      }
+      
+      // If jadwal is in the past, it's finished
+      return true
+    } catch (error) {
+      console.error('Error checking jadwal finished:', error)
+      return false
+    }
+  }
+
+  // ✅ Mark Alpa handler
+  const handleMarkAlpa = async () => {
+    if (!selectedJadwalForAlpa) return
+    
+    setMarkAlpaLoading(true)
+    try {
+      const response = await fetch('/api/attendance/mark-alpa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jadwal_id: selectedJadwalForAlpa.id })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to mark alpa')
+      }
+
+      toast({
+        title: 'Success! ✅',
+        description: `${data.alpaCreated} mahasiswa marked as ALPA, ${data.skipped} skipped (sudah hadir/izin/sakit)`,
+        variant: 'success'
+      })
+
+      console.log('Mark Alpa Result:', data)
+      setMarkAlpaOpen(false)
+      setSelectedJadwalForAlpa(null)
+      fetchJadwals()
+
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to mark alpa',
+        variant: 'destructive'
+      })
+    } finally {
+      setMarkAlpaLoading(false)
+    }
+  }
 
   const onSubmit = async (data: JadwalFormData) => {
     setSubmitting(true)
@@ -132,24 +213,98 @@ export default function JadwalPage() {
         <CardContent className="p-0">
           {loading ? <div className="space-y-3 p-4">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
           : jadwals.length === 0 ? <p className="p-6 text-center text-muted-foreground">Belum ada jadwal.</p>
-          : <div className="divide-y">{jadwals.map(j => (
-            <div key={j.id} className="flex items-center justify-between p-4">
-              <div className="space-y-1 min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-medium">{j.nama_kegiatan}</p>
-                  <Badge variant="secondary">{formatLabel(j.jenis)}</Badge>
-                  {j.wajib_foto && <Badge variant="info">Foto Wajib</Badge>}
+          : <div className="divide-y">{jadwals.map(j => {
+            const finished = isJadwalFinished(j)
+            
+            return (
+              <div key={j.id} className="flex items-center justify-between p-4">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-medium">{j.nama_kegiatan}</p>
+                    <Badge variant="secondary">{formatLabel(j.jenis)}</Badge>
+                    {j.wajib_foto && <Badge variant="info">Foto Wajib</Badge>}
+                    
+                    {/* ✅ Status badge - finished or ongoing */}
+                    {finished ? (
+                      <Badge variant="destructive" className="text-xs">Selesai</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs">Berlangsung</Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground">{formatDate(j.tanggal)} · {j.jam_mulai}–{j.jam_selesai} · {formatLabel(j.target_unit)}</p>
                 </div>
-                <p className="text-sm text-muted-foreground">{formatDate(j.tanggal)} · {j.jam_mulai}–{j.jam_selesai} · {formatLabel(j.target_unit)}</p>
+                <div className="flex gap-1 shrink-0">
+                  {/* ✅ Mark Alpa button - only show for finished jadwal */}
+                  {finished && (
+                    <Button 
+                      variant="outline" 
+                      size="icon" 
+                      onClick={() => {
+                        setSelectedJadwalForAlpa(j)
+                        setMarkAlpaOpen(true)
+                      }}
+                      title="Mark mahasiswa as ALPA"
+                    >
+                      <AlertCircle className="h-4 w-4 text-orange-600" />
+                    </Button>
+                  )}
+                  
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(j)}><Pencil className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => handleDelete(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                </div>
               </div>
-              <div className="flex gap-1 shrink-0">
-                <Button variant="ghost" size="icon" onClick={() => openEdit(j)}><Pencil className="h-4 w-4" /></Button>
-                <Button variant="ghost" size="icon" onClick={() => handleDelete(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-              </div>
-            </div>
-          ))}</div>}
+            )
+          })}</div>}
         </CardContent>
       </Card>
+
+      {/* ✅ Mark Alpa Dialog */}
+      <AlertDialog open={markAlpaOpen} onOpenChange={setMarkAlpaOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark attendance as ALPA?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedJadwalForAlpa && (
+                <>
+                  This will set all mahasiswa who didn't attend <strong>"{selectedJadwalForAlpa.nama_kegiatan}"</strong> ({formatDate(selectedJadwalForAlpa.tanggal)}) as ALPA.
+                  <br />
+                  <br />
+                  <strong>Will be skipped:</strong>
+                  <ul className="mt-2 ml-4 list-disc space-y-1 text-sm">
+                    <li>Mahasiswa with status "Hadir"</li>
+                    <li>Mahasiswa with status "Izin"</li>
+                    <li>Mahasiswa with status "Sakit"</li>
+                  </ul>
+                  <br />
+                  <strong>Action:</strong> Only mahasiswa with NO attendance record will be marked as ALPA.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex gap-3">
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleMarkAlpa}
+              disabled={markAlpaLoading}
+              className="gap-2"
+            >
+              {markAlpaLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-4 w-4" />
+                  Confirm
+                </>
+              )}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Form Dialog - unchanged */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{editingJadwal ? 'Edit Jadwal' : 'Tambah Jadwal'}</DialogTitle></DialogHeader>
