@@ -18,15 +18,6 @@ import { useToast } from '@/hooks/use-toast'
 import { JENIS_KEGIATAN_OPTIONS, UNIT_OPTIONS, KITAB_NGAJI_OPTIONS, KEGIATAN_PENGURUS_OPTIONS } from '@/lib/constants'
 import { Plus, Pencil, Trash2, Loader2, AlertCircle } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 
 export default function JadwalPage() {
   const [jadwals, setJadwals] = useState<JadwalKegiatan[]>([])
@@ -39,7 +30,7 @@ export default function JadwalPage() {
   const [selectedKegiatanPengurus, setSelectedKegiatanPengurus] = useState('')
   
   // ✅ New state for Mark Alpa
-  const [markAlpaOpen, setMarkAlpaOpen] = useState(false)
+  const [markAlpaDialogOpen, setMarkAlpaDialogOpen] = useState(false)
   const [selectedJadwalForAlpa, setSelectedJadwalForAlpa] = useState<JadwalKegiatan | null>(null)
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
 
@@ -109,7 +100,7 @@ export default function JadwalPage() {
       })
 
       console.log('Mark Alpa Result:', data)
-      setMarkAlpaOpen(false)
+      setMarkAlpaDialogOpen(false)
       setSelectedJadwalForAlpa(null)
       fetchJadwals()
 
@@ -241,7 +232,7 @@ export default function JadwalPage() {
                       size="icon" 
                       onClick={() => {
                         setSelectedJadwalForAlpa(j)
-                        setMarkAlpaOpen(true)
+                        setMarkAlpaDialogOpen(true)
                       }}
                       title="Mark mahasiswa as ALPA"
                     >
@@ -258,51 +249,74 @@ export default function JadwalPage() {
         </CardContent>
       </Card>
 
-      {/* ✅ Mark Alpa Dialog */}
-      <AlertDialog open={markAlpaOpen} onOpenChange={setMarkAlpaOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Mark attendance as ALPA?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {selectedJadwalForAlpa && (
-                <>
-                  This will set all mahasiswa who didn't attend <strong>"{selectedJadwalForAlpa.nama_kegiatan}"</strong> ({formatDate(selectedJadwalForAlpa.tanggal)}) as ALPA.
-                  <br />
-                  <br />
-                  <strong>Will be skipped:</strong>
-                  <ul className="mt-2 ml-4 list-disc space-y-1 text-sm">
+      {/* ✅ Mark Alpa Dialog - Custom Dialog */}
+      {markAlpaDialogOpen && selectedJadwalForAlpa && (
+        <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Mark attendance as ALPA?</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-lg bg-orange-50 border border-orange-200 p-3 space-y-2">
+                <p className="text-sm font-medium text-orange-900">
+                  {selectedJadwalForAlpa.nama_kegiatan}
+                </p>
+                <p className="text-xs text-orange-700">
+                  {formatDate(selectedJadwalForAlpa.tanggal)} · {selectedJadwalForAlpa.jam_mulai}–{selectedJadwalForAlpa.jam_selesai}
+                </p>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <p className="font-medium">This will set all mahasiswa who didn't attend as ALPA.</p>
+                
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 space-y-2">
+                  <p className="text-xs font-medium text-blue-900">Will be skipped:</p>
+                  <ul className="text-xs text-blue-800 space-y-1 ml-4 list-disc">
                     <li>Mahasiswa with status "Hadir"</li>
                     <li>Mahasiswa with status "Izin"</li>
                     <li>Mahasiswa with status "Sakit"</li>
                   </ul>
-                  <br />
-                  <strong>Action:</strong> Only mahasiswa with NO attendance record will be marked as ALPA.
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex gap-3">
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleMarkAlpa}
-              disabled={markAlpaLoading}
-              className="gap-2"
-            >
-              {markAlpaLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="h-4 w-4" />
-                  Confirm
-                </>
-              )}
-            </AlertDialogAction>
-          </div>
-        </AlertDialogContent>
-      </AlertDialog>
+                </div>
+
+                <p className="text-xs text-gray-600">
+                  Only mahasiswa with NO attendance record will be marked as ALPA.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setMarkAlpaDialogOpen(false)
+                    setSelectedJadwalForAlpa(null)
+                  }}
+                  disabled={markAlpaLoading}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleMarkAlpa}
+                  disabled={markAlpaLoading}
+                >
+                  {markAlpaLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="mr-2 h-4 w-4" />
+                      Confirm
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Form Dialog - unchanged */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
