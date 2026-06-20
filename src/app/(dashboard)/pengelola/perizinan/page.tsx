@@ -35,7 +35,7 @@ export default function PerizinanPengelolaPage() {
   const fetchPerizinan = useCallback(async () => {
     setLoading(true)
     try {
-      // 1. Fetch Izin Sesi (DENGAN PERBAIKAN FOREIGN KEY)
+      // 1. Fetch Izin Sesi
       let querySesi = supabase
         .from('izin_sesi')
         .select(`
@@ -49,7 +49,7 @@ export default function PerizinanPengelolaPage() {
         `)
         .order('created_at', { ascending: false })
 
-      // 2. Fetch Izin Pulang (DENGAN PERBAIKAN FOREIGN KEY)
+      // 2. Fetch Izin Pulang
       let queryPulang = supabase
         .from('izin_pulang')
         .select(`
@@ -93,6 +93,7 @@ export default function PerizinanPengelolaPage() {
     const { data: { user } } = await supabase.auth.getUser()
     const table = izinType === 'sesi' ? 'izin_sesi' : 'izin_pulang'
 
+    // 1. Update status di tabel izin
     const { error } = await supabase
       .from(table)
       .update({
@@ -106,6 +107,38 @@ export default function PerizinanPengelolaPage() {
     if (error) {
       toast({ title: 'Error', description: `Gagal memperbarui: ${error.message}`, variant: 'destructive' })
     } else {
+      
+      // --- OTOMATISASI KE TABEL PRESENSI (KHUSUS IZIN SESI) ---
+      if (izinType === 'sesi') {
+        // Jika di-approve maka status presensi = 'izin', jika di-reject maka 'alpha'
+        const statusPresensi = status === 'approved' ? 'izin' : 'alpha'
+        
+        // Cek apakah data presensi sudah terlanjur ada sebelumnya
+        const { data: existingPresensi } = await supabase
+          .from('presensi')
+          .select('id')
+          .eq('mahasiswa_id', selectedIzin.mahasiswa_id)
+          .eq('sesi_id', selectedIzin.sesi_id)
+          .single()
+
+        if (existingPresensi) {
+          // Jika sudah ada, update statusnya
+          await supabase.from('presensi').update({
+            status: statusPresensi,
+            waktu_absen: new Date().toISOString()
+          }).eq('id', existingPresensi.id)
+        } else {
+          // Jika belum ada, masukkan data baru
+          await supabase.from('presensi').insert({
+            mahasiswa_id: selectedIzin.mahasiswa_id,
+            sesi_id: selectedIzin.sesi_id,
+            status: statusPresensi,
+            waktu_absen: new Date().toISOString()
+          })
+        }
+      }
+      // --------------------------------------------------------
+
       toast({
         title: 'Berhasil',
         description: status === 'approved' ? 'Perizinan disetujui' : 'Perizinan ditolak',
