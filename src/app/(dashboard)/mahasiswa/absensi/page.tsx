@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { useGeolocation } from '@/hooks/use-geolocation'
 import { useCamera } from '@/hooks/use-camera'
-import { Camera, MapPin, Check, Loader2, AlertCircle } from 'lucide-react'
+import { Camera, MapPin, Check, Loader2, AlertCircle, Map } from 'lucide-react'
 import { IMAGE_COMPRESSION_OPTIONS } from '@/lib/constants'
 import { formatDate, formatLabel } from '@/lib/utils'
 
@@ -19,12 +19,13 @@ export default function AbsensiPage() {
   const [selectedJadwal, setSelectedJadwal] = useState<any>(null)
   const [presensiMap, setPresensiMap] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+
   const { toast } = useToast()
   const { latitude, longitude, error: geoError, loading: geoLoading, getLocation } = useGeolocation()
   const { photoUrl, photoBlob, isCapturing, error: cameraError, videoRef, canvasRef, startCamera, capturePhoto, resetPhoto } = useCamera()
   const supabase = createClient()
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -32,372 +33,152 @@ export default function AbsensiPage() {
       
       const { data: profile } = await supabase
         .from('profiles')
-        .select('unit')
+        .select('unit, semester')
         .eq('id', user.id)
         .single()
       
       const today = new Date().toISOString().split('T')[0]
       
-      const { data: jadwalData } = await supabase
-        .from('jadwal_kegiatan')
-        .select('*')
+      // Ambil semua sesi hari ini beserta nama kegiatannya
+      const { data: sesiData } = await supabase
+        .from('sesi')
+        .select('*, nama_kegiatan(nama_kegiatan)')
         .eq('tanggal', today)
-        .or(`target_unit.eq.${profile?.unit},target_unit.eq.gabungan`)
       
-      setJadwals(jadwalData ?? [])
+      // Filter sesi secara client-side berdasarkan logika JSONB tipe_target
+      const validSesi = (sesiData ?? []).filter((s: any) => {
+        if (s.tipe_target === 'semua') return true
+        if (s.tipe_target === 'unit' && s.target_audiens?.unit === profile?.unit) return true
+        if (s.tipe_target === 'unit_semester' && 
+            s.target_audiens?.unit === profile?.unit && 
+            s.target_audiens?.semester === profile?.semester) return true
+        return false
+      })
       
-      if (jadwalData && jadwalData.length > 0) {
-        const ids = jadwalData.map((j: any) => j.id)
+      setJadwals(validSesi)
+      
+      if (validSesi.length > 0) {
+        const ids = validSesi.map((j: any) => j.id)
         const { data: presensiData } = await supabase
           .from('presensi')
-          .select('jadwal_id, status')
+          .select('sesi_id, status')
           .eq('mahasiswa_id', user.id)
-          .in('jadwal_id', ids)
+          .in('sesi_id', ids)
         
         const map: Record<string, string> = {}
-        ;(presensiData ?? []).forEach((p: any) => {
-          map[p.jadwal_id] = p.status
-        })
+        ;(presensiData ?? []).forEach((p: any) => { map[p.sesi_id] = p.status })
         setPresensiMap(map)
       }
     } catch (error) {
-      console.error('Error fetching data:', error)
-      toast({
-        title: 'Error',
-        description: 'Gagal memuat data jadwal',
-        variant: 'destructive'
-      })
+      toast({ title: 'Error', description: 'Gagal memuat data jadwal', variant: 'destructive' })
     }
     setLoading(false)
-  }
+  }, [supabase, toast])
 
-  useEffect(() => {
-    fetchData()
-  }, [])
+  useEffect(() => { fetchData() }, [fetchData])
 
-  // ✅ Get deadline time (priority: batas_absen > jam_selesai)
-  const getDeadlineTime = (jadwal: any): string | null => {
-    if (!jadwal) return null
-    
-    if (jadwal.batas_absen && jadwal.batas_absen.trim() !== '') {
-      return jadwal.batas_absen
-    }
-    
-    if (jadwal.jam_selesai && jadwal.jam_selesai.trim() !== '') {
-      return jadwal.jam_selesai
-    }
-    
-    return null
-  }
-
-  // ✅ Check if time is past deadline
+  // Cek apakah waktu sudah melewati jam_selesai sesi
   const isPastDeadline = (jadwal: any): boolean => {
-    if (!jadwal) return false
-    
-    const deadlineTime = getDeadlineTime(jadwal)
-    
-    if (!deadlineTime) {
-      console.warn('⚠️ No deadline for jadwal:', jadwal.nama_kegiatan)
-      return false
-    }
-    
+    if (!jadwal || !jadwal.jam_selesai) return false
     try {
       const now = new Date()
       const batasDate = new Date(now)
-      
-      const [hour, min] = deadlineTime.split(':').map(Number)
+      const [hour, min] = jadwal.jam_selesai.split(':').map(Number)
       batasDate.setHours(hour, min, 0, 0)
-      
-      const isPast = now > batasDate
-      
-      console.log(`📊 Deadline Check for "${jadwal.nama_kegiatan}":`)
-      console.log(`   Deadline: ${deadlineTime} (using ${jadwal.batas_absen ? 'batas_absen' : 'jam_selesai'})`)
-      console.log(`   Current: ${now.toLocaleTimeString()}`)
-      console.log(`   Is past: ${isPast}`)
-      
-      return isPast
-    } catch (error) {
-      console.error('❌ Error comparing time:', error)
-      return false
-    }
+      return now > batasDate
+    } catch { return false }
   }
 
-  // ✅ Get time remaining until deadline
   const getTimeRemaining = (jadwal: any): string | null => {
-    if (!jadwal) return null
-    
-    const deadlineTime = getDeadlineTime(jadwal)
-    if (!deadlineTime) return null
-    
+    if (!jadwal || !jadwal.jam_selesai) return null
     try {
       const now = new Date()
       const batasDate = new Date(now)
-      
-      const [hour, min] = deadlineTime.split(':').map(Number)
+      const [hour, min] = jadwal.jam_selesai.split(':').map(Number)
       batasDate.setHours(hour, min, 0, 0)
       
       const diff = batasDate.getTime() - now.getTime()
-      
       if (diff <= 0) return 'Waktu habis'
       
       const minutes = Math.floor(diff / 60000)
       if (minutes < 1) return 'Kurang dari 1 menit'
       if (minutes < 60) return `${minutes} menit lagi`
-      
       const hours = Math.floor(minutes / 60)
-      return `${hours}h ${minutes % 60}m lagi`
-    } catch (error) {
-      console.error('Error calculating time remaining:', error)
-      return null
-    }
+      return `${hours}j ${minutes % 60}m lagi`
+    } catch { return null }
   }
 
-  // ✅ IMPROVED: Upload photo with complete logging
   const uploadPhotoToStorage = async (blob: Blob, userId: string) => {
-    try {
-      const timestamp = Date.now()
-      const random = Math.random().toString(36).substring(7)
-      const filename = `${userId}/${timestamp}_${random}.jpg`
-      
-      console.log('📸 Step 1: Starting photo upload')
-      console.log('   Filename:', filename)
-      console.log('   File size:', blob.size, 'bytes')
-      console.log('   File type:', blob.type)
-      
-      // ✅ Verify bucket exists
-      console.log('📦 Step 2: Checking storage buckets...')
-      const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
-      
-      if (bucketsError) {
-        console.error('❌ Error listing buckets:', bucketsError)
-        throw bucketsError
-      }
-      
-      console.log('   Available buckets:', buckets?.map(b => b.name))
-      
-      const bucketExists = buckets?.some(b => b.name === 'attendance-photos')
-      if (!bucketExists) {
-        throw new Error('❌ Bucket "attendance-photos" not found. Please create it in Supabase Storage.')
-      }
-      
-      console.log('✅ Bucket "attendance-photos" exists')
-      
-      // ✅ Upload file
-      console.log('📤 Step 3: Uploading file to storage...')
-      const { data, error: uploadError } = await supabase.storage
-        .from('attendance-photos')
-        .upload(filename, blob, {
-          contentType: 'image/jpeg',
-          upsert: false
-        })
-      
-      if (uploadError) {
-        console.error('❌ Upload error:', uploadError)
-        console.error('   Error name:', uploadError.name)
-        console.error('   Error message:', uploadError.message)
-        throw uploadError
-      }
-      
-      console.log('✅ File uploaded successfully')
-      console.log('   File path:', data?.path)
-      console.log('   Full path:', data?.fullPath)
-      
-      // ✅ Get public URL
-      console.log('🔗 Step 4: Generating public URL...')
-      const { data: { publicUrl } } = supabase.storage
-        .from('attendance-photos')
-        .getPublicUrl(filename)
-      
-      console.log('✅ Public URL generated:', publicUrl)
-      
-      if (!publicUrl) {
-        throw new Error('Failed to generate public URL')
-      }
-      
-      // ✅ Verify URL format
-      if (!publicUrl.startsWith('http')) {
-        throw new Error('Invalid URL format: ' + publicUrl)
-      }
-      
-      console.log('🔍 Step 5: URL verification')
-      console.log('   URL starts with http:', publicUrl.startsWith('http'))
-      console.log('   URL length:', publicUrl.length)
-      
-      return publicUrl
-      
-    } catch (error) {
-      console.error('💥 Photo upload failed:', error)
-      throw error
-    }
+    const timestamp = Date.now()
+    const random = Math.random().toString(36).substring(7)
+    const filename = `${userId}/${timestamp}_${random}.jpg`
+    
+    const { data, error: uploadError } = await supabase.storage
+      .from('attendance-photos')
+      .upload(filename, blob, { contentType: 'image/jpeg', upsert: false })
+    
+    if (uploadError) throw uploadError
+    
+    const { data: { publicUrl } } = supabase.storage.from('attendance-photos').getPublicUrl(filename)
+    return publicUrl
   }
 
   const handleAbsen = async () => {
     if (!selectedJadwal) return
     
-    // ✅ LAYER 1: Double-check if still past deadline
-    console.log('🔍 LAYER 1: Checking deadline before processing...')
+    // Validasi 1: Ketersediaan Lokasi
+    if (!latitude || !longitude) {
+      toast({ title: 'Akses Lokasi Dibutuhkan', description: 'Harap izinkan akses lokasi (GPS) di browser Anda untuk absen.', variant: 'destructive' })
+      return
+    }
+
+    // Validasi 2: Waktu Habis (Otomatis Alpha)
     if (isPastDeadline(selectedJadwal)) {
-      toast({
-        title: 'Waktu Habis',
-        description: 'Waktu absensi sudah berakhir!',
-        variant: 'destructive'
-      })
-      setSelectedJadwal(null)
-      resetPhoto()
+      toast({ title: 'Waktu Habis', description: 'Melewati jam selesai. Status diubah menjadi Alpha.', variant: 'destructive' })
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        await supabase.from('presensi').upsert({
+          mahasiswa_id: user.id, sesi_id: selectedJadwal.id, status: 'alpha', waktu_absen: new Date().toISOString()
+        })
+        fetchData()
+        setSelectedJadwal(null)
+      }
+      return
+    }
+
+    // Validasi 3: Foto Selfie
+    if (!photoBlob) {
+      toast({ title: 'Foto Diperlukan', description: 'Ambil foto selfie bukti kehadiran terlebih dahulu.', variant: 'destructive' })
       return
     }
     
     setSubmitting(true)
-    
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       
-      const now = new Date()
+      const imageCompression = (await import('browser-image-compression')).default
+      const compressed = await imageCompression(photoBlob as File, IMAGE_COMPRESSION_OPTIONS)
+      const fotoUrl = await uploadPhotoToStorage(compressed, user.id)
       
-      // ✅ LAYER 2: Final check before submission
-      console.log('🔍 LAYER 2: Final deadline check...')
-      if (isPastDeadline(selectedJadwal)) {
-        toast({
-          title: 'Waktu Habis',
-          description: 'Sudah melewati batas absensi. Status akan di-set menjadi Alpa.',
-          variant: 'destructive'
-        })
-        
-        const { error: alpaError } = await supabase
-          .from('presensi')
-          .upsert({
-            mahasiswa_id: user.id,
-            jadwal_id: selectedJadwal.id,
-            status: 'alpa',
-            waktu_absen: now.toISOString(),
-            foto_url: null,
-            latitude: latitude || null,
-            longitude: longitude || null
-          })
-        
-        if (alpaError) throw alpaError
-        
-        toast({
-          title: 'Status Alpa',
-          description: 'Presensi tercatat sebagai Alpa',
-          variant: 'default'
-        })
-        
-        setSelectedJadwal(null)
-        resetPhoto()
-        fetchData()
-        setSubmitting(false)
-        return
-      }
-      
-      // ✅ Handle photo upload with detailed logging
-      let fotoUrl: string | null = null
-      if (selectedJadwal.wajib_foto) {
-        if (!photoBlob) {
-          toast({
-            title: 'Foto Diperlukan',
-            description: 'Ambil foto selfie terlebih dahulu',
-            variant: 'destructive'
-          })
-          setSubmitting(false)
-          return
-        }
-        
-        try {
-          console.log('📷 Processing photo blob...')
-          console.log('   Blob size:', photoBlob.size, 'bytes')
-          console.log('   Blob type:', photoBlob.type)
-          
-          const imageCompression = (await import('browser-image-compression')).default
-          const compressed = await imageCompression(photoBlob as File, IMAGE_COMPRESSION_OPTIONS)
-          
-          console.log('✅ Photo compressed')
-          console.log('   Original size:', photoBlob.size, 'bytes')
-          console.log('   Compressed size:', compressed.size, 'bytes')
-          console.log('   Compression ratio:', ((1 - compressed.size / photoBlob.size) * 100).toFixed(1) + '%')
-          
-          fotoUrl = await uploadPhotoToStorage(compressed, user.id)
-          console.log('🎉 Photo URL obtained and verified:', fotoUrl)
-          
-        } catch (photoError) {
-          console.error('❌ Photo processing failed:', photoError)
-          toast({
-            title: 'Error Upload Foto',
-            description: (photoError as Error).message || 'Gagal upload foto. Absensi akan dicatat tanpa foto.',
-            variant: 'destructive'
-          })
-          fotoUrl = null
-        }
-      }
-      
-      // ✅ Submit attendance
-      console.log('💾 Step 6: Submitting attendance to database...')
-      console.log('   Data:', {
+      const { error } = await supabase.from('presensi').upsert({
         mahasiswa_id: user.id,
-        jadwal_id: selectedJadwal.id,
+        sesi_id: selectedJadwal.id,
         status: 'hadir',
+        waktu_absen: new Date().toISOString(),
         foto_url: fotoUrl,
-        latitude: latitude || null,
-        longitude: longitude || null,
-        waktu_absen: now.toISOString()
+        latitude: latitude,
+        longitude: longitude
       })
       
-      const { data: insertData, error } = await supabase
-        .from('presensi')
-        .upsert({
-          mahasiswa_id: user.id,
-          jadwal_id: selectedJadwal.id,
-          status: 'hadir',
-          waktu_absen: now.toISOString(),
-          foto_url: fotoUrl,
-          latitude: latitude || null,
-          longitude: longitude || null
-        })
+      if (error) throw error
       
-      if (error) {
-        console.error('❌ Database error:', error)
-        console.error('   Error code:', error.code)
-        console.error('   Error message:', error.message)
-        throw error
-      }
-      
-      console.log('✅ Attendance saved to database')
-      console.log('   Returned data:', insertData)
-      
-      // ✅ Verify data was saved
-      console.log('🔍 Step 7: Verifying data was saved...')
-      const { data: verifyData, error: verifyError } = await supabase
-        .from('presensi')
-        .select('*')
-        .eq('mahasiswa_id', user.id)
-        .eq('jadwal_id', selectedJadwal.id)
-        .single()
-      
-      if (!verifyError) {
-        console.log('✅ Data verified in database')
-        console.log('   Foto URL in DB:', verifyData?.foto_url)
-        console.log('   Status in DB:', verifyData?.status)
-      } else {
-        console.warn('⚠️ Could not verify data:', verifyError)
-      }
-      
-      toast({
-        title: 'Absen Berhasil! ✅',
-        description: fotoUrl ? 'Kehadiran dan foto tercatat' : 'Kehadiran tercatat',
-        variant: 'success'
-      })
-      
+      toast({ title: 'Absen Berhasil! ✅', description: 'Kehadiran, lokasi, dan foto tercatat.', variant: 'success' })
       setSelectedJadwal(null)
       resetPhoto()
       fetchData()
-    } catch (error) {
-      console.error('❌ Attendance error:', error)
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Gagal absen',
-        variant: 'destructive'
-      })
+    } catch (error: any) {
+      toast({ title: 'Gagal Absen', description: error.message || 'Terjadi kesalahan sistem.', variant: 'destructive' })
     } finally {
       setSubmitting(false)
     }
@@ -405,82 +186,43 @@ export default function AbsensiPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Absensi Digital"
-        description={`Jadwal hari ini - ${formatDate(new Date())}`}
-      />
+      <PageHeader title="Absensi Digital" description={`Jadwal sesi hari ini - ${formatDate(new Date())}`} />
 
       {loading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <Skeleton key={i} className="h-20 w-full" />
-          ))}
-        </div>
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
       ) : jadwals.length === 0 ? (
-        <Card>
-          <CardContent className="p-8 text-center text-muted-foreground">
-            Tidak ada jadwal hari ini.
-          </CardContent>
-        </Card>
+        <Card><CardContent className="p-12 text-center text-muted-foreground">Tidak ada jadwal sesi hari ini untuk unit Anda.</CardContent></Card>
       ) : (
         <div className="space-y-3">
           {jadwals.map((j: any) => (
-            <Card
-              key={j.id}
-              className={`transition-all ${
-                selectedJadwal?.id === j.id ? 'ring-2 ring-primary' : ''
-              }`}
-            >
-              <CardContent className="flex items-center justify-between gap-3 p-3 sm:p-4">
+            <Card key={j.id} className={`transition-all ${selectedJadwal?.id === j.id ? 'ring-2 ring-primary' : ''}`}>
+              <CardContent className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
                 <div className="space-y-1 min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-medium text-sm">{j.nama_kegiatan}</p>
-                    {j.wajib_foto && (
-                      <Badge variant="info" className="text-xs">
-                        Wajib Foto
-                      </Badge>
-                    )}
-                    {isPastDeadline(j) && !presensiMap[j.id] && (
-                      <Badge variant="destructive" className="text-xs">
-                        Terlambat
-                      </Badge>
-                    )}
+                    <p className="font-semibold text-foreground">{j.nama_kegiatan?.nama_kegiatan}</p>
+                    {isPastDeadline(j) && !presensiMap[j.id] && <Badge variant="destructive" className="text-xs">Terlambat</Badge>}
                   </div>
-                  <p className="text-xs sm:text-sm text-muted-foreground">
-                    {j.jam_mulai}–{j.jam_selesai}
-                    {j.batas_absen ? ` · Batas: ${j.batas_absen}` : ''}
-                  </p>
-                  {!presensiMap[j.id] && (
-                    <p className="text-xs text-orange-600 font-medium">
-                      ⏱️ {getTimeRemaining(j)}
-                    </p>
-                  )}
+                  <p className="text-sm text-muted-foreground">Jam Pelaksanaan: {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} WIB</p>
+                  {!presensiMap[j.id] && !isPastDeadline(j) && <p className="text-xs text-orange-600 font-medium">⏱️ Sisa waktu: {getTimeRemaining(j)}</p>}
                 </div>
+                
                 {presensiMap[j.id] ? (
-                  <Badge variant="success" className="shrink-0">
-                    <Check className="mr-1 h-3 w-3" />
-                    {formatLabel(presensiMap[j.id])}
+                  <Badge variant={presensiMap[j.id] === 'hadir' ? 'success' : presensiMap[j.id] === 'izin' ? 'warning' : 'destructive'} className="shrink-0 w-fit">
+                    {presensiMap[j.id] === 'hadir' ? <Check className="mr-1 h-3 w-3" /> : null} {formatLabel(presensiMap[j.id])}
                   </Badge>
                 ) : (
-                  <Button
-                    size="sm"
-                    className="shrink-0"
+                  <Button size="sm" className="shrink-0 w-full sm:w-auto" disabled={isPastDeadline(j)}
                     onClick={() => {
                       if (isPastDeadline(j)) {
-                        toast({
-                          title: 'Waktu Habis',
-                          description: 'Waktu absensi untuk kegiatan ini sudah berakhir.',
-                          variant: 'destructive'
-                        })
+                        toast({ title: 'Waktu Habis', description: 'Waktu absensi berakhir.', variant: 'destructive' })
                         return
                       }
                       setSelectedJadwal(j)
                       resetPhoto()
                       getLocation()
                     }}
-                    disabled={isPastDeadline(j)}
                   >
-                    {isPastDeadline(j) ? 'Terlambat' : 'Absen'}
+                    {isPastDeadline(j) ? 'Sesi Ditutup' : 'Mulai Absen'}
                   </Button>
                 )}
               </CardContent>
@@ -490,151 +232,79 @@ export default function AbsensiPage() {
       )}
 
       {selectedJadwal && (
-        <Card className="border-primary">
-          <CardHeader>
-            <CardTitle className="text-lg">
-              📋 Absen: {selectedJadwal.nama_kegiatan}
-            </CardTitle>
+        <Card className="border-primary animate-fade-in shadow-md">
+          <CardHeader className="bg-primary/5 border-b pb-4">
+            <CardTitle className="text-lg flex items-center">📋 Validasi Absen: <span className="ml-2 font-normal text-muted-foreground">{selectedJadwal.nama_kegiatan?.nama_kegiatan}</span></CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Geolocation Section */}
-            <div className="rounded-lg bg-gray-50 p-3 space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <MapPin className="h-4 w-4 text-green-600" />
-                <span>Lokasi</span>
+          <CardContent className="space-y-6 pt-6">
+            
+            {/* 1. SEKSI LOKASI */}
+            <div className="rounded-xl border p-4 space-y-4 bg-card shadow-sm">
+              <div className="flex items-center gap-2 font-semibold text-foreground">
+                <Map className="h-5 w-5 text-blue-600" /> Perekaman Lokasi
               </div>
               
-              {geoLoading ? (
-                <div className="flex items-center gap-2 text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Mendapatkan lokasi...</span>
+              <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+                <div className="flex-1 space-y-1">
+                  {geoLoading ? (
+                    <p className="text-sm flex items-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin mr-2" /> Mencari sinyal GPS...</p>
+                  ) : geoError ? (
+                    <p className="text-sm text-destructive flex items-center font-medium"><AlertCircle className="h-4 w-4 mr-2" /> Gagal mendapat akses lokasi. Periksa izin browser.</p>
+                  ) : latitude ? (
+                    <p className="text-sm font-mono text-muted-foreground">Titik Koordinat: {latitude.toFixed(5)}, {longitude?.toFixed(5)}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Lokasi belum terdeteksi.</p>
+                  )}
                 </div>
-              ) : geoError ? (
-                <div className="flex items-center gap-2 text-sm text-orange-600">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>⚠️ Lokasi tidak tersedia (opsional)</span>
+                
+                <Button variant="secondary" size="sm" onClick={getLocation} disabled={geoLoading} className="w-full sm:w-auto shrink-0">
+                  <MapPin className="mr-2 h-4 w-4" /> Perbarui Titik GPS
+                </Button>
+              </div>
+            </div>
+
+            {/* 2. SEKSI KAMERA SELFIE */}
+            <div className="rounded-xl border p-4 space-y-4 bg-card shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold text-foreground">
+                  <Camera className="h-5 w-5 text-indigo-600" /> Foto Selfie Kehadiran
                 </div>
-              ) : latitude ? (
-                <div className="text-sm text-gray-700 font-mono break-all">
-                  📍 {latitude.toFixed(6)}, {longitude?.toFixed(6)}
+                <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">Wajib</Badge>
+              </div>
+              
+              {isCapturing ? (
+                <div className="relative bg-black rounded-lg overflow-hidden ring-1 ring-border">
+                  <video ref={videoRef} autoPlay playsInline muted className="w-full object-cover" style={{ aspectRatio: '4/3', maxHeight: '400px' }} />
+                  <canvas ref={canvasRef} className="hidden" />
+                  <Button onClick={capturePhoto} size="lg" className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full shadow-lg">
+                    <Camera className="mr-2 h-5 w-5" /> Jepret Foto
+                  </Button>
+                </div>
+              ) : photoUrl ? (
+                <div className="space-y-3">
+                  <img src={photoUrl} alt="Hasil Selfie" className="w-full rounded-lg object-cover ring-1 ring-border shadow-sm max-h-72" />
+                  <Button variant="outline" onClick={startCamera} className="w-full"><Camera className="mr-2 h-4 w-4" /> Foto Ulang</Button>
                 </div>
               ) : (
-                <div className="text-sm text-gray-600">
-                  Klik tombol di bawah untuk mendapatkan lokasi
-                </div>
-              )}
-              
-              {!latitude && !geoLoading && !geoError && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={getLocation}
-                  className="w-full"
-                >
-                  <MapPin className="mr-2 h-4 w-4" />
-                  Dapatkan Lokasi
+                <Button onClick={startCamera} className="w-full h-24 border-dashed bg-muted/30 hover:bg-muted/50" variant="outline">
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground"><Camera className="h-6 w-6" /> Buka Kamera</div>
                 </Button>
               )}
+              {cameraError && <p className="text-sm text-destructive font-medium bg-red-50 p-2 rounded-md">{cameraError}</p>}
             </div>
 
-            {/* Camera Section */}
-            {selectedJadwal.wajib_foto && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Camera className="h-4 w-4 text-blue-600" />
-                  <span>Foto Selfie</span>
-                </div>
-                
-                {isCapturing ? (
-                  <div className="relative bg-black rounded-lg overflow-hidden">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full bg-black rounded-lg"
-                      style={{ aspectRatio: '16/9', maxHeight: '400px' }}
-                    />
-                    <canvas ref={canvasRef} className="hidden" />
-                    <Button
-                      onClick={capturePhoto}
-                      className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-2"
-                    >
-                      <Camera className="h-4 w-4" />
-                      Ambil Foto
-                    </Button>
-                  </div>
-                ) : photoUrl ? (
-                  <div className="space-y-2">
-                    <img
-                      src={photoUrl}
-                      alt="Selfie"
-                      className="w-full rounded-lg max-h-64 object-cover"
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={startCamera}
-                      className="w-full"
-                    >
-                      <Camera className="mr-2 h-4 w-4" />
-                      Foto Ulang
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    onClick={startCamera}
-                    className="w-full"
-                    variant="outline"
-                  >
-                    <Camera className="mr-2 h-4 w-4" />
-                    Buka Kamera Selfie
-                  </Button>
-                )}
-                
-                {cameraError && (
-                  <div className="rounded-lg bg-red-50 border border-red-200 p-3">
-                    <p className="text-sm text-red-800">{cameraError}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex gap-3 pt-2">
-              <Button
-                className="flex-1"
-                onClick={handleAbsen}
-                disabled={submitting || geoLoading}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Memproses...
-                  </>
-                ) : (
-                  <>
-                    <Check className="mr-2 h-4 w-4" />
-                    Konfirmasi Absen
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => {
-                  setSelectedJadwal(null)
-                  resetPhoto()
-                }}
-                disabled={submitting}
-              >
-                Batal
+            {/* 3. TOMBOL AKSI */}
+            <div className="flex gap-3 pt-4 border-t">
+              <Button variant="outline" className="flex-1" onClick={() => { setSelectedJadwal(null); resetPhoto() }} disabled={submitting}>Batal</Button>
+              <Button className="flex-1" onClick={handleAbsen} disabled={submitting || geoLoading || !latitude || !photoBlob}>
+                {submitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Menyimpan...</> : <><Check className="mr-2 h-4 w-4" /> Konfirmasi Hadir</>}
               </Button>
             </div>
+            
           </CardContent>
         </Card>
       )}
     </div>
   )
 }
-
 export const dynamic = 'force-dynamic'
