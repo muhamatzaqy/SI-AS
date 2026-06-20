@@ -11,40 +11,76 @@ export default async function PengelolaDashboard() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+  
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'pengelola') redirect(`/${profile?.role ?? 'login'}`)
 
-  const [{ count: totalMahasiswa }, { count: totalJadwal }, { count: pendingIzin }, { count: pendingSpp }] = await Promise.all([
+  // Mengambil total perhitungan stat card
+  const [
+    { count: totalMahasiswa }, 
+    { count: totalJadwal }, 
+    { count: pendingIzinSesi }, 
+    { count: pendingIzinPulang }, 
+    { count: pendingSpp }
+  ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'mahasiswa').eq('is_active', true),
-    supabase.from('jadwal_kegiatan').select('*', { count: 'exact', head: true }).eq('tanggal', new Date().toISOString().split('T')[0]),
-    supabase.from('perizinan').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('pembayaran_spp').select('*', { count: 'exact', head: true }).eq('status', 'menunggu_verifikasi'),
+    supabase.from('sesi').select('*', { count: 'exact', head: true }).eq('tanggal', new Date().toISOString().split('T')[0]),
+    supabase.from('izin_sesi').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    supabase.from('izin_pulang').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    supabase.from('tagihan_spp').select('*', { count: 'exact', head: true }).eq('status', 'menunggu_verifikasi'),
   ])
 
-  const { data: recentIzin } = await supabase
-    .from('perizinan')
+  const pendingIzinTotal = (pendingIzinSesi ?? 0) + (pendingIzinPulang ?? 0)
+
+  // Mengambil data perizinan terbaru (gabungan dari izin sesi dan izin pulang)
+  const { data: recentIzinSesiData } = await supabase
+    .from('izin_sesi')
     .select('*, profiles(nama, nim)')
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
     .limit(5)
 
-  const { data: recentSpp } = await supabase
-    .from('pembayaran_spp')
+  const { data: recentIzinPulangData } = await supabase
+    .from('izin_pulang')
     .select('*, profiles(nama, nim)')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  // Menggabungkan dan mengurutkan berdasarkan yang terbaru
+  const recentIzin = [
+    ...(recentIzinSesiData || []).map(i => ({ ...i, type: 'Sesi', alasan: i.alasan_izin })),
+    ...(recentIzinPulangData || []).map(i => ({ ...i, type: 'Pulang', alasan: i.keterangan }))
+  ]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5)
+
+  // Fetch SPP terbaru (Join dengan master_tarif untuk mendapatkan nominal)
+  const { data: recentSpp } = await supabase
+    .from('tagihan_spp')
+    .select('*, profiles(nama, nim), master_tarif(nominal)')
     .eq('status', 'menunggu_verifikasi')
     .order('created_at', { ascending: false })
     .limit(5)
 
-  // Fetch attendance data for statistics
+  // Fetch presensi (Join berantai: presensi -> sesi -> nama_kegiatan)
   const { data: allPresensi } = await supabase
     .from('presensi')
-    .select('status, jadwal_kegiatan(nama_kegiatan)')
+    .select(`
+      status, 
+      sesi (
+        nama_kegiatan (
+          nama_kegiatan
+        )
+      )
+    `)
 
-  // Calculate average attendance per activity
+  // Hitung rata-rata kehadiran
   const activityStats: Record<string, { nama: string; hadir: number; izin: number; alpha: number }> = {}
   ;(allPresensi ?? []).forEach((p: any) => {
-    const nama = p.jadwal_kegiatan?.nama_kegiatan ?? 'Lainnya'
+    const nama = p.sesi?.nama_kegiatan?.nama_kegiatan ?? 'Lainnya'
     if (!activityStats[nama]) activityStats[nama] = { nama, hadir: 0, izin: 0, alpha: 0 }
+    
     if (p.status === 'hadir') activityStats[nama].hadir++
     else if (p.status === 'izin') activityStats[nama].izin++
     else activityStats[nama].alpha++
@@ -67,20 +103,20 @@ export default async function PengelolaDashboard() {
           iconClassName="bg-emerald-100 [&_svg]:text-emerald-600"
         />
         <StatCard
-          title="Jadwal Hari Ini"
+          title="Sesi Hari Ini"
           value={totalJadwal ?? 0}
           icon={Calendar}
           iconClassName="bg-blue-100 [&_svg]:text-blue-600"
         />
         <StatCard
           title="Izin Menunggu"
-          value={pendingIzin ?? recentIzin?.length ?? 0}
+          value={pendingIzinTotal}
           icon={CheckSquare}
           iconClassName="bg-amber-100 [&_svg]:text-amber-600"
         />
         <StatCard
-          title="Pembayaran Menunggu"
-          value={pendingSpp ?? recentSpp?.length ?? 0}
+          title="Verifikasi SPP"
+          value={pendingSpp ?? 0}
           icon={CreditCard}
           iconClassName="bg-purple-100 [&_svg]:text-purple-600"
         />
@@ -144,11 +180,11 @@ export default async function PengelolaDashboard() {
           </div>
         </CardHeader>
         <CardContent>
-          {(pendingIzin ?? 0) > 0 && (!recentIzin || recentIzin.length === 0) ? (
+          {pendingIzinTotal > 0 && recentIzin.length === 0 ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 p-3">
                 <div>
-                  <p className="font-semibold text-sm text-amber-800">{pendingIzin} perizinan menunggu persetujuan</p>
+                  <p className="font-semibold text-sm text-amber-800">{pendingIzinTotal} perizinan menunggu persetujuan</p>
                   <p className="text-xs text-amber-600">Klik &quot;Lihat semua&quot; untuk mereview</p>
                 </div>
                 <Link href="/pengelola/perizinan" className="shrink-0 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 border border-amber-200 hover:bg-amber-200 transition-colors">
@@ -156,7 +192,7 @@ export default async function PengelolaDashboard() {
                 </Link>
               </div>
             </div>
-          ) : recentIzin && recentIzin.length > 0 ? (
+          ) : recentIzin.length > 0 ? (
             <div className="space-y-2">
               {recentIzin.map((izin) => {
                 const p = izin.profiles as { nama: string; nim: string } | null
@@ -167,7 +203,9 @@ export default async function PengelolaDashboard() {
                   >
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-sm text-foreground">{p?.nama ?? '-'}</p>
-                      <p className="text-xs text-muted-foreground">{p?.nim} · {formatLabel(izin.jenis_izin)}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {p?.nim} · <span className="font-medium">Izin {izin.type}</span>: {izin.alasan}
+                      </p>
                     </div>
                     <span className="ml-3 shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
                       Pending
@@ -201,8 +239,9 @@ export default async function PengelolaDashboard() {
         <CardContent>
           {recentSpp && recentSpp.length > 0 ? (
             <div className="space-y-2">
-              {recentSpp.map((spp) => {
+              {recentSpp.map((spp: any) => {
                 const p = spp.profiles as { nama: string; nim: string } | null
+                const nominal = spp.master_tarif?.nominal ?? 0
                 return (
                   <div
                     key={spp.id}
@@ -210,7 +249,7 @@ export default async function PengelolaDashboard() {
                   >
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-sm text-foreground">{p?.nama ?? '-'}</p>
-                      <p className="text-xs text-muted-foreground">{p?.nim} · {formatCurrency(spp.nominal)}</p>
+                      <p className="text-xs text-muted-foreground">{p?.nim} · {formatCurrency(nominal)}</p>
                     </div>
                     <span className="ml-3 shrink-0 rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700 border border-purple-200">
                       Menunggu
