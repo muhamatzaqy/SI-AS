@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users, Search } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- SKEMA VALIDASI ZOD ---
@@ -54,6 +54,7 @@ export default function JadwalDanMasterPage() {
   const [dialogSesiOpen, setDialogSesiOpen] = useState(false)
   const [editingSesi, setEditingSesi] = useState<any | null>(null)
   const [submittingSesi, setSubmittingSesi] = useState(false)
+  const [searchMahasiswa, setSearchMahasiswa] = useState('') // State untuk pencarian custom audiens
 
   // --- STATE MODAL MASTER ---
   const [dialogMasterOpen, setDialogMasterOpen] = useState(false)
@@ -193,6 +194,7 @@ export default function JadwalDanMasterPage() {
 
   const openCreateSesi = () => {
     setEditingSesi(null)
+    setSearchMahasiswa('') // Reset pencarian
     formSesi.reset({ 
       tipe_target: 'semua', target_unit: '', target_semester: '', target_custom_ids: [], 
       jenis_id: '', nama_kegiatan_id: '', tanggal: '', jam_mulai: '', jam_selesai: '' 
@@ -202,6 +204,7 @@ export default function JadwalDanMasterPage() {
 
   const openEditSesi = (j: any) => {
     setEditingSesi(j)
+    setSearchMahasiswa('') // Reset pencarian
     
     // Ekstrak data dari JSONB untuk form
     let mappedUnit = ''
@@ -500,33 +503,56 @@ export default function JadwalDanMasterPage() {
                 </div>
               )}
 
-              {/* Conditional Fields: Custom (Daftar Checkbox) */}
+              {/* Conditional Fields: Custom (Daftar Checkbox + Search) */}
               {watchedTipeTarget === 'custom' && (
-                <div className="space-y-2 pt-1">
-                  <Label className="text-xs flex items-center justify-between">
-                    Pilih Mahasiswa
-                    <span className="text-muted-foreground font-normal">
-                      Terpilih: {formSesi.watch('target_custom_ids')?.length || 0} orang
+                <div className="space-y-3 pt-2 border-t border-blue-100">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Pilih Mahasiswa</Label>
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold">
+                      Terpilih: {formSesi.watch('target_custom_ids')?.length || 0}
                     </span>
-                  </Label>
-                  <div className="max-h-48 overflow-y-auto border bg-background rounded-md p-3 space-y-2">
+                  </div>
+
+                  {/* Input Search Mahasiswa */}
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input 
+                      placeholder="Cari nama atau NIM..." 
+                      className="pl-9 bg-background h-9 text-sm"
+                      value={searchMahasiswa}
+                      onChange={(e) => setSearchMahasiswa(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Daftar Checkbox yang bisa di-filter */}
+                  <div className="max-h-48 overflow-y-auto border bg-background rounded-md p-2 space-y-1">
                     {mahasiswaList.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center">Tidak ada data mahasiswa aktif.</p>
+                      <p className="text-xs text-muted-foreground text-center py-4">Tidak ada data mahasiswa aktif.</p>
                     ) : (
-                      mahasiswaList.map(m => (
-                        <label key={m.id} className="flex items-center space-x-3 hover:bg-muted/50 p-1 rounded cursor-pointer transition-colors">
-                          <input 
-                            type="checkbox" 
-                            value={m.id} 
-                            {...formSesi.register('target_custom_ids')} 
-                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                          />
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium">{m.nama}</span>
-                            <span className="text-xs text-muted-foreground">{m.nim} • {formatLabel(m.unit)}</span>
-                          </div>
-                        </label>
-                      ))
+                      mahasiswaList.map(m => {
+                        // Logika filter (menyembunyikan yang tidak cocok)
+                        const isMatch = m.nama.toLowerCase().includes(searchMahasiswa.toLowerCase()) || 
+                                        m.nim.toLowerCase().includes(searchMahasiswa.toLowerCase());
+                        
+                        return (
+                          <label 
+                            key={m.id} 
+                            // Gunakan CSS 'hidden' agar data checkbox di balik layar tidak terhapus (tetap ter-register oleh formSesi)
+                            className={`flex items-center space-x-3 hover:bg-muted/50 p-2 rounded cursor-pointer transition-colors ${isMatch ? '' : 'hidden'}`}
+                          >
+                            <input 
+                              type="checkbox" 
+                              value={m.id} 
+                              {...formSesi.register('target_custom_ids')} 
+                              className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary mt-0.5"
+                            />
+                            <div className="flex flex-col leading-tight">
+                              <span className="text-sm font-medium">{m.nama}</span>
+                              <span className="text-xs text-muted-foreground">{m.nim} • {formatLabel(m.unit)}</span>
+                            </div>
+                          </label>
+                        )
+                      })
                     )}
                   </div>
                 </div>
