@@ -22,7 +22,7 @@ import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- PENGATURAN WHATSAPP PENGURUS ---
 // Gunakan format kode negara (62) tanpa tanda plus atau angka 0 di depan
-const PENGURUS_WA_NUMBER = '6281234567890' 
+const PENGURUS_WA_NUMBER = '6285641659901' 
 
 // --- SKEMA VALIDASI ZOD LOKAL ---
 const izinSesiSchema = z.object({
