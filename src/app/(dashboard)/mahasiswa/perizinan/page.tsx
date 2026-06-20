@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { Plus, Loader2, CalendarDays, Home, Info } from 'lucide-react'
+import { Plus, Loader2, CalendarDays, Home, Info, AlertCircle } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- SKEMA VALIDASI ZOD LOKAL ---
@@ -42,6 +42,10 @@ export default function PerizinanMahasiswaPage() {
   const [izinSesiData, setIzinSesiData] = useState<any[]>([])
   const [izinPulangData, setIzinPulangData] = useState<any[]>([])
   const [jadwals, setJadwals] = useState<any[]>([]) // Untuk dropdown sesi
+  
+  // State untuk melacak ID sesi yang sudah diabsen atau diajukan izinnya
+  const [sesiSudahDiabsen, setSesiSudahDiabsen] = useState<string[]>([])
+  
   const [loading, setLoading] = useState(true)
 
   const [dialogSesiOpen, setDialogSesiOpen] = useState(false)
@@ -83,10 +87,22 @@ export default function PerizinanMahasiswaPage() {
           .order('created_at', { ascending: false })
       ])
 
-      setIzinSesiData(resSesi.data ?? [])
+      const dataIzinSesi = resSesi.data ?? []
+      setIzinSesiData(dataIzinSesi)
       setIzinPulangData(resPulang.data ?? [])
 
-      // 3. Ambil Jadwal Sesi ke depan untuk Dropdown Izin Sesi
+      // 3. Ambil data Presensi yang sudah dilakukan mahasiswa ini
+      const { data: presensiMahasiswa } = await supabase
+        .from('presensi')
+        .select('sesi_id')
+        .eq('mahasiswa_id', user.id)
+
+      // Gabungkan ID Sesi yang SUDAH diabsen atau SUDAH diajukan izinnya
+      const sudahAbsenIds = (presensiMahasiswa ?? []).map(p => p.sesi_id)
+      const sudahIzinIds = dataIzinSesi.map(i => i.sesi_id)
+      setSesiSudahDiabsen([...sudahAbsenIds, ...sudahIzinIds])
+
+      // 4. Ambil Jadwal Sesi ke depan untuk Dropdown Izin Sesi
       const today = new Date().toISOString().split('T')[0]
       const { data: sesiList } = await supabase
         .from('sesi')
@@ -115,6 +131,12 @@ export default function PerizinanMahasiswaPage() {
 
   // --- SUBMIT IZIN SESI ---
   const onSubmitSesi = async (data: IzinSesiFormData) => {
+    // Validasi Ganda (Mencegah Bypass)
+    if (sesiSudahDiabsen.includes(data.sesi_id)) {
+      toast({ title: 'Aksi Ditolak', description: 'Anda sudah tercatat absen atau sedang mengajukan izin untuk sesi ini.', variant: 'destructive' })
+      return
+    }
+
     setSubmittingSesi(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -167,6 +189,9 @@ export default function PerizinanMahasiswaPage() {
       setSubmittingPulang(false)
     }
   }
+
+  // Menentukan mana jadwal yang bisa dipilih di dropdown (disaring)
+  const availableJadwals = jadwals.filter(j => !sesiSudahDiabsen.includes(j.id))
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -290,10 +315,10 @@ export default function PerizinanMahasiswaPage() {
                       <SelectValue placeholder="Pilih jadwal yang akan ditinggalkan" />
                     </SelectTrigger>
                     <SelectContent>
-                      {jadwals.length === 0 ? (
-                        <SelectItem value="empty" disabled>Tidak ada jadwal terdekat</SelectItem>
+                      {availableJadwals.length === 0 ? (
+                        <SelectItem value="empty" disabled>Tidak ada jadwal yang tersedia</SelectItem>
                       ) : (
-                        jadwals.map((j: any) => (
+                        availableJadwals.map((j: any) => (
                           <SelectItem key={j.id} value={j.id}>
                             {j.nama_kegiatan?.nama_kegiatan} — {formatDate(j.tanggal)} ({j.jam_mulai.slice(0,5)})
                           </SelectItem>
@@ -304,6 +329,14 @@ export default function PerizinanMahasiswaPage() {
                 )}
               />
               {formSesi.formState.errors.sesi_id && <p className="text-xs text-red-500">{formSesi.formState.errors.sesi_id.message}</p>}
+              
+              {/* Pesan Info jika ada jadwal yang disembunyikan */}
+              {jadwals.length > availableJadwals.length && (
+                <div className="flex items-start gap-2 mt-2 text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-100">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <p>Beberapa jadwal tidak ditampilkan karena Anda sudah tercatat absen atau sedang mengajukan izin pada sesi tersebut.</p>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
