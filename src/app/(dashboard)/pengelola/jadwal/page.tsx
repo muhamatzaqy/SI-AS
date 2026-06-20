@@ -16,14 +16,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- SKEMA VALIDASI ZOD ---
 const sesiFormSchema = z.object({
   jenis_id: z.string().min(1, "Jenis kegiatan wajib dipilih"),
   nama_kegiatan_id: z.string().min(1, "Nama kegiatan wajib dipilih"),
-  target_unit: z.string().min(1, "Target audiens wajib dipilih"),
+  tipe_target: z.enum(['semua', 'unit', 'unit_semester', 'custom']),
+  target_unit: z.string().optional(),
+  target_semester: z.string().optional(),
+  target_custom_ids: z.array(z.string()).optional(),
   tanggal: z.string().min(1, "Tanggal wajib diisi"),
   jam_mulai: z.string().min(1, "Jam mulai wajib diisi"),
   jam_selesai: z.string().min(1, "Jam selesai wajib diisi"),
@@ -44,6 +47,7 @@ export default function JadwalDanMasterPage() {
   const [jadwals, setJadwals] = useState<any[]>([])
   const [masterJenis, setMasterJenis] = useState<any[]>([])
   const [masterKegiatan, setMasterKegiatan] = useState<any[]>([])
+  const [mahasiswaList, setMahasiswaList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   // --- STATE MODAL SESI ---
@@ -63,9 +67,12 @@ export default function JadwalDanMasterPage() {
 
   // --- FORMS ---
   const formSesi = useForm<SesiFormData>({ 
-    resolver: zodResolver(sesiFormSchema), defaultValues: { target_unit: 'semua' }
+    resolver: zodResolver(sesiFormSchema), defaultValues: { tipe_target: 'semua', target_custom_ids: [] }
   })
-  const selectedJenisIdForSesi = formSesi.watch('jenis_id')
+  
+  const watchedJenisId = formSesi.watch('jenis_id')
+  const watchedTipeTarget = formSesi.watch('tipe_target')
+  const watchedUnit = formSesi.watch('target_unit')
 
   const formMaster = useForm<MasterFormData>({ 
     resolver: zodResolver(masterFormSchema)
@@ -73,12 +80,14 @@ export default function JadwalDanMasterPage() {
 
   // --- FETCHING DATA ---
   const fetchMasterData = async () => {
-    const [resJenis, resKegiatan] = await Promise.all([
+    const [resJenis, resKegiatan, resMahasiswa] = await Promise.all([
       supabase.from('jenis_kegiatan').select('*').order('nama_jenis'),
-      supabase.from('nama_kegiatan').select('*, jenis_kegiatan(nama_jenis)').order('nama_kegiatan')
+      supabase.from('nama_kegiatan').select('*, jenis_kegiatan(nama_jenis)').order('nama_kegiatan'),
+      supabase.from('profiles').select('id, nama, nim, unit').eq('role', 'mahasiswa').eq('is_active', true).order('nama')
     ])
     setMasterJenis(resJenis.data ?? [])
     setMasterKegiatan(resKegiatan.data ?? [])
+    setMahasiswaList(resMahasiswa.data ?? [])
   }
 
   const fetchJadwals = async () => {
@@ -134,10 +143,30 @@ export default function JadwalDanMasterPage() {
   const onSubmitSesi = async (data: SesiFormData) => {
     setSubmittingSesi(true)
     try {
-      const tipeTarget = data.target_unit === 'semua' ? 'semua' : 'unit'
-      const targetAudiens = data.target_unit === 'semua' ? {} : { unit: data.target_unit }
-      const payload = { ...data, tipe_target: tipeTarget, target_audiens: targetAudiens }
-      delete (payload as any).target_unit // hapus target_unit dari payload karena tidak ada di db
+      // 1. Membangun JSONB target_audiens berdasarkan tipe_target
+      let targetAudiens = {}
+      
+      if (data.tipe_target === 'unit') {
+        if (!data.target_unit) throw new Error("Unit wajib dipilih")
+        targetAudiens = { unit: data.target_unit }
+      } 
+      else if (data.tipe_target === 'unit_semester') {
+        if (!data.target_unit || !data.target_semester) throw new Error("Unit dan Semester wajib dipilih")
+        targetAudiens = { unit: data.target_unit, semester: parseInt(data.target_semester) }
+      } 
+      else if (data.tipe_target === 'custom') {
+        if (!data.target_custom_ids || data.target_custom_ids.length === 0) throw new Error("Pilih minimal 1 mahasiswa untuk target custom")
+        targetAudiens = { mahasiswa_ids: data.target_custom_ids }
+      }
+
+      const payload = { 
+        nama_kegiatan_id: data.nama_kegiatan_id,
+        tanggal: data.tanggal,
+        jam_mulai: data.jam_mulai,
+        jam_selesai: data.jam_selesai,
+        tipe_target: data.tipe_target,
+        target_audiens: targetAudiens
+      }
 
       if (editingSesi) {
         const { error } = await supabase.from('sesi').update(payload).eq('id', editingSesi.id)
@@ -146,6 +175,7 @@ export default function JadwalDanMasterPage() {
         const { error } = await supabase.from('sesi').insert(payload)
         if (error) throw error
       }
+      
       toast({ title: 'Berhasil', description: 'Jadwal sesi tersimpan', variant: 'success' })
       setDialogSesiOpen(false)
       fetchJadwals()
@@ -163,17 +193,37 @@ export default function JadwalDanMasterPage() {
 
   const openCreateSesi = () => {
     setEditingSesi(null)
-    formSesi.reset({ target_unit: 'semua', jenis_id: '', nama_kegiatan_id: '', tanggal: '', jam_mulai: '', jam_selesai: '' })
+    formSesi.reset({ 
+      tipe_target: 'semua', target_unit: '', target_semester: '', target_custom_ids: [], 
+      jenis_id: '', nama_kegiatan_id: '', tanggal: '', jam_mulai: '', jam_selesai: '' 
+    })
     setDialogSesiOpen(true)
   }
 
   const openEditSesi = (j: any) => {
     setEditingSesi(j)
-    const mappedTargetUnit = j.tipe_target === 'unit' && j.target_audiens?.unit ? j.target_audiens.unit : 'semua'
+    
+    // Ekstrak data dari JSONB untuk form
+    let mappedUnit = ''
+    let mappedSemester = ''
+    let mappedCustomIds: string[] = []
+
+    if (j.target_audiens) {
+      if (j.target_audiens.unit) mappedUnit = j.target_audiens.unit
+      if (j.target_audiens.semester) mappedSemester = j.target_audiens.semester.toString()
+      if (j.target_audiens.mahasiswa_ids) mappedCustomIds = j.target_audiens.mahasiswa_ids
+    }
+
     formSesi.reset({ 
       jenis_id: j.nama_kegiatan?.jenis_kegiatan?.id || '',
-      nama_kegiatan_id: j.nama_kegiatan_id, target_unit: mappedTargetUnit, 
-      tanggal: j.tanggal, jam_mulai: j.jam_mulai.slice(0,5), jam_selesai: j.jam_selesai.slice(0,5),
+      nama_kegiatan_id: j.nama_kegiatan_id, 
+      tipe_target: j.tipe_target as any,
+      target_unit: mappedUnit, 
+      target_semester: mappedSemester,
+      target_custom_ids: mappedCustomIds,
+      tanggal: j.tanggal, 
+      jam_mulai: j.jam_mulai.slice(0,5), 
+      jam_selesai: j.jam_selesai.slice(0,5),
     })
     setDialogSesiOpen(true)
   }
@@ -191,7 +241,7 @@ export default function JadwalDanMasterPage() {
       }
       toast({ title: 'Berhasil', description: 'Master kegiatan tersimpan', variant: 'success' })
       setDialogMasterOpen(false)
-      fetchMasterData() // Refresh tabel master & dropdown
+      fetchMasterData() 
     } catch (err: any) { 
       toast({ title: 'Error', description: err.message, variant: 'destructive' }) 
     } finally { setSubmittingMaster(false) }
@@ -201,7 +251,7 @@ export default function JadwalDanMasterPage() {
     if (!confirm('Yakin hapus data master ini? PERHATIAN: Semua sesi yang menggunakan kegiatan ini juga akan ikut terhapus!')) return
     await supabase.from('nama_kegiatan').delete().eq('id', id)
     fetchMasterData()
-    fetchJadwals() // Karena cascade delete
+    fetchJadwals() 
     toast({ title: 'Berhasil', description: 'Master kegiatan dihapus', variant: 'success' })
   }
 
@@ -217,7 +267,16 @@ export default function JadwalDanMasterPage() {
     setDialogMasterOpen(true)
   }
 
-  const filteredKegiatanForSesiDropdown = masterKegiatan.filter(k => k.jenis_id === selectedJenisIdForSesi)
+  // Helper untuk Table Render
+  const getAudiensLabel = (tipe: string, audiens: any) => {
+    if (tipe === 'semua') return 'Gabungan (Semua Unit)'
+    if (tipe === 'unit') return `Unit: ${formatLabel(audiens?.unit)}`
+    if (tipe === 'unit_semester') return `Unit: ${formatLabel(audiens?.unit)} (Smt ${audiens?.semester})`
+    if (tipe === 'custom') return `Custom (${audiens?.mahasiswa_ids?.length || 0} orang)`
+    return '-'
+  }
+
+  const filteredKegiatanForSesiDropdown = masterKegiatan.filter(k => k.jenis_id === watchedJenisId)
 
   return (
     <div className="space-y-6">
@@ -259,7 +318,7 @@ export default function JadwalDanMasterPage() {
                     const finished = isJadwalFinished(j)
                     const namaKegiatan = j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui'
                     const jenisKegiatan = j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-'
-                    const audiensLabel = j.tipe_target === 'semua' ? 'Gabungan' : (j.target_audiens?.unit ? formatLabel(j.target_audiens.unit) : j.tipe_target)
+                    const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
                     
                     return (
                       <div key={j.id} className="flex items-center justify-between p-4 hover:bg-muted/30 transition-colors">
@@ -270,7 +329,7 @@ export default function JadwalDanMasterPage() {
                             {finished ? <Badge variant="destructive" className="text-xs">Selesai</Badge> : <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
                           </div>
                           <p className="text-sm text-muted-foreground">
-                            {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} · Peserta: {audiensLabel}
+                            {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} · Peserta: <span className="font-medium text-foreground/80">{audiensLabel}</span>
                           </p>
                         </div>
                         
@@ -352,51 +411,134 @@ export default function JadwalDanMasterPage() {
 
       {/* --- DIALOG MODAL SESI (JADWAL) --- */}
       <Dialog open={dialogSesiOpen} onOpenChange={setDialogSesiOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingSesi ? 'Edit Jadwal Sesi' : 'Tambah Jadwal Sesi'}</DialogTitle>
+            <DialogDescription>Jadwalkan kajian atau kegiatan untuk mahasiswa.</DialogDescription>
           </DialogHeader>
+
           <form onSubmit={formSesi.handleSubmit(onSubmitSesi)} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Jenis Kegiatan</Label>
-              <Controller control={formSesi.control} name="jenis_id" render={({ field }) => (
-                <Select onValueChange={(val) => { field.onChange(val); formSesi.setValue('nama_kegiatan_id', '') }} value={field.value}>
-                  <SelectTrigger className={formSesi.formState.errors.jenis_id ? "border-red-500" : ""}><SelectValue placeholder="Pilih jenis..." /></SelectTrigger>
-                  <SelectContent>{masterJenis.map(opt => <SelectItem key={opt.id} value={opt.id}>{opt.nama_jenis}</SelectItem>)}</SelectContent>
-                </Select>
-              )}/>
+            
+            {/* Pemilihan Kegiatan */}
+            <div className="grid grid-cols-2 gap-3 p-3 bg-muted/30 rounded-lg border">
+              <div className="space-y-2">
+                <Label>Jenis Kegiatan</Label>
+                <Controller control={formSesi.control} name="jenis_id" render={({ field }) => (
+                  <Select onValueChange={(val) => { field.onChange(val); formSesi.setValue('nama_kegiatan_id', '') }} value={field.value}>
+                    <SelectTrigger className={`bg-background ${formSesi.formState.errors.jenis_id ? "border-red-500" : ""}`}><SelectValue placeholder="Pilih jenis..." /></SelectTrigger>
+                    <SelectContent>{masterJenis.map(opt => <SelectItem key={opt.id} value={opt.id}>{opt.nama_jenis}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}/>
+              </div>
+              <div className="space-y-2">
+                <Label>Nama Kegiatan</Label>
+                <Controller control={formSesi.control} name="nama_kegiatan_id" render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value} disabled={!watchedJenisId}>
+                    <SelectTrigger className={`bg-background ${formSesi.formState.errors.nama_kegiatan_id ? "border-red-500" : ""}`}><SelectValue placeholder="Pilih kegiatan..." /></SelectTrigger>
+                    <SelectContent>
+                      {filteredKegiatanForSesiDropdown.length === 0 ? (
+                        <SelectItem value="empty" disabled>Belum ada data</SelectItem>
+                      ) : filteredKegiatanForSesiDropdown.map(opt => <SelectItem key={opt.id} value={opt.id}>{opt.nama_kegiatan}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}/>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>Nama Kegiatan</Label>
-              <Controller control={formSesi.control} name="nama_kegiatan_id" render={({ field }) => (
-                <Select onValueChange={field.onChange} value={field.value} disabled={!selectedJenisIdForSesi}>
-                  <SelectTrigger className={formSesi.formState.errors.nama_kegiatan_id ? "border-red-500" : ""}><SelectValue placeholder="Pilih kegiatan..." /></SelectTrigger>
-                  <SelectContent>
-                    {filteredKegiatanForSesiDropdown.length === 0 ? (
-                      <SelectItem value="empty" disabled>Belum ada kegiatan di jenis ini</SelectItem>
-                    ) : filteredKegiatanForSesiDropdown.map(opt => <SelectItem key={opt.id} value={opt.id}>{opt.nama_kegiatan}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              )}/>
-              <p className="text-xs text-muted-foreground mt-1">Tidak ada di pilihan? Tambahkan dulu di Tab Master Kegiatan.</p>
+
+            {/* Target Audiens Dinamis */}
+            <div className="space-y-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
+              <div className="space-y-2">
+                <Label className="text-blue-900 font-semibold flex items-center"><Users className="h-4 w-4 mr-2"/> Tipe Target Peserta</Label>
+                <Controller control={formSesi.control} name="tipe_target" render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Pilih tipe target..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="semua">Gabungan (Semua Unit)</SelectItem>
+                      <SelectItem value="unit">Per Unit (Satu Unit Penuh)</SelectItem>
+                      <SelectItem value="unit_semester">Unit & Spesifik Semester</SelectItem>
+                      <SelectItem value="custom">Custom (Pilih Perorangan)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}/>
+              </div>
+
+              {/* Conditional Fields: Unit & Semester */}
+              {(watchedTipeTarget === 'unit' || watchedTipeTarget === 'unit_semester') && (
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Pilih Unit</Label>
+                    <Controller control={formSesi.control} name="target_unit" render={({ field }) => (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <SelectTrigger className="bg-background"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mahad_aly">Mahad Aly</SelectItem>
+                          <SelectItem value="lkim">LKIM</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}/>
+                  </div>
+                  {watchedTipeTarget === 'unit_semester' && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Pilih Semester</Label>
+                      <Controller control={formSesi.control} name="target_semester" render={({ field }) => (
+                        <Select onValueChange={field.onChange} value={field.value} disabled={watchedUnit === 'lkim'}>
+                          <SelectTrigger className="bg-background"><SelectValue placeholder="Pilih semester" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">Semester 1</SelectItem>
+                            <SelectItem value="2">Semester 2</SelectItem>
+                            <SelectItem value="3">Semester 3</SelectItem>
+                            <SelectItem value="4">Semester 4</SelectItem>
+                            <SelectItem value="5">Semester 5</SelectItem>
+                            <SelectItem value="6">Semester 6</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}/>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Conditional Fields: Custom (Daftar Checkbox) */}
+              {watchedTipeTarget === 'custom' && (
+                <div className="space-y-2 pt-1">
+                  <Label className="text-xs flex items-center justify-between">
+                    Pilih Mahasiswa
+                    <span className="text-muted-foreground font-normal">
+                      Terpilih: {formSesi.watch('target_custom_ids')?.length || 0} orang
+                    </span>
+                  </Label>
+                  <div className="max-h-48 overflow-y-auto border bg-background rounded-md p-3 space-y-2">
+                    {mahasiswaList.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center">Tidak ada data mahasiswa aktif.</p>
+                    ) : (
+                      mahasiswaList.map(m => (
+                        <label key={m.id} className="flex items-center space-x-3 hover:bg-muted/50 p-1 rounded cursor-pointer transition-colors">
+                          <input 
+                            type="checkbox" 
+                            value={m.id} 
+                            {...formSesi.register('target_custom_ids')} 
+                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">{m.nama}</span>
+                            <span className="text-xs text-muted-foreground">{m.nim} • {formatLabel(m.unit)}</span>
+                          </div>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label>Target Audiens</Label>
-              <Controller control={formSesi.control} name="target_unit" render={({ field }) => (
-                <Select onValueChange={field.onChange} value={field.value}>
-                  <SelectTrigger className={formSesi.formState.errors.target_unit ? "border-red-500" : ""}><SelectValue placeholder="Pilih target..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="semua">Gabungan (Semua Unit)</SelectItem>
-                    <SelectItem value="mahad_aly">Mahad Aly</SelectItem>
-                    <SelectItem value="lkim">LKIM</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}/>
-            </div>
+
+            {/* Waktu Pelaksanaan */}
             <div className="space-y-2">
               <Label>Tanggal</Label>
               <Input {...formSesi.register('tanggal')} type="date" className={formSesi.formState.errors.tanggal ? "border-red-500" : ""} />
             </div>
+            
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Jam Mulai</Label>
@@ -407,7 +549,8 @@ export default function JadwalDanMasterPage() {
                 <Input {...formSesi.register('jam_selesai')} type="time" className={formSesi.formState.errors.jam_selesai ? "border-red-500" : ""} />
               </div>
             </div>
-            <Button type="submit" className="w-full" disabled={submittingSesi}>
+
+            <Button type="submit" className="w-full mt-4" disabled={submittingSesi}>
               {submittingSesi ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {editingSesi ? 'Simpan Perubahan' : 'Buat Sesi Baru'}
             </Button>
