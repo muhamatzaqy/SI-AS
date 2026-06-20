@@ -35,12 +35,12 @@ export default function PerizinanPengelolaPage() {
   const fetchPerizinan = useCallback(async () => {
     setLoading(true)
     try {
-      // 1. Fetch Izin Sesi
+      // WAJIB ditambahkan 'semester' pada pemanggilan profile untuk keperluan filter Izin Pulang
       let querySesi = supabase
         .from('izin_sesi')
         .select(`
           *,
-          profiles!izin_sesi_mahasiswa_id_fkey(nama, nim, unit),
+          profiles!izin_sesi_mahasiswa_id_fkey(nama, nim, unit, semester),
           sesi(
             tanggal, 
             jam_mulai, 
@@ -49,12 +49,11 @@ export default function PerizinanPengelolaPage() {
         `)
         .order('created_at', { ascending: false })
 
-      // 2. Fetch Izin Pulang
       let queryPulang = supabase
         .from('izin_pulang')
         .select(`
           *,
-          profiles!izin_pulang_mahasiswa_id_fkey(nama, nim, unit)
+          profiles!izin_pulang_mahasiswa_id_fkey(nama, nim, unit, semester)
         `)
         .order('created_at', { ascending: false })
 
@@ -71,7 +70,6 @@ export default function PerizinanPengelolaPage() {
       setIzinSesi(resSesi.data ?? [])
       setIzinPulang(resPulang.data ?? [])
     } catch (err: any) {
-      console.error('Error fetch perizinan:', err)
       toast({ title: 'Error', description: err.message || 'Gagal memuat data', variant: 'destructive' })
     } finally {
       setLoading(false)
@@ -93,7 +91,7 @@ export default function PerizinanPengelolaPage() {
     const { data: { user } } = await supabase.auth.getUser()
     const table = izinType === 'sesi' ? 'izin_sesi' : 'izin_pulang'
 
-    // 1. Update status di tabel izin
+    // 1. Update status di tabel izin (mengubah statusnya di layar Perizinan)
     const { error } = await supabase
       .from(table)
       .update({
@@ -106,49 +104,105 @@ export default function PerizinanPengelolaPage() {
 
     if (error) {
       toast({ title: 'Error', description: `Gagal memperbarui: ${error.message}`, variant: 'destructive' })
-    } else {
-      
-      // --- OTOMATISASI KE TABEL PRESENSI (KHUSUS IZIN SESI) ---
-      if (izinType === 'sesi') {
-        // Jika di-approve maka status presensi = 'izin', jika di-reject maka 'alpha'
-        const statusPresensi = status === 'approved' ? 'izin' : 'alpha'
-        
-        // Cek apakah data presensi sudah terlanjur ada sebelumnya
-        const { data: existingPresensi } = await supabase
-          .from('presensi')
-          .select('id')
-          .eq('mahasiswa_id', selectedIzin.mahasiswa_id)
-          .eq('sesi_id', selectedIzin.sesi_id)
-          .single()
-
-        if (existingPresensi) {
-          // Jika sudah ada, update statusnya
-          await supabase.from('presensi').update({
-            status: statusPresensi,
-            waktu_absen: new Date().toISOString()
-          }).eq('id', existingPresensi.id)
-        } else {
-          // Jika belum ada, masukkan data baru
-          await supabase.from('presensi').insert({
-            mahasiswa_id: selectedIzin.mahasiswa_id,
-            sesi_id: selectedIzin.sesi_id,
-            status: statusPresensi,
-            waktu_absen: new Date().toISOString()
-          })
-        }
-      }
-      // --------------------------------------------------------
-
-      toast({
-        title: 'Berhasil',
-        description: status === 'approved' ? 'Perizinan disetujui' : 'Perizinan ditolak',
-        variant: 'success'
-      })
-      setSelectedIzin(null)
-      setIzinType(null)
-      setCatatan('')
-      fetchPerizinan() // Refresh data
+      setSubmitting(false)
+      return
     }
+
+    // =========================================================================
+    // 2. OTOMATISASI KE TABEL PRESENSI JIKA STATUS === 'APPROVED'
+    // Jika ditolak (rejected), kita biarkan saja (jangan paksakan Alpha)
+    // =========================================================================
+    if (status === 'approved') {
+      try {
+        if (izinType === 'sesi') {
+          // --- LOGIKA IZIN SESI ---
+          const { data: existing } = await supabase
+            .from('presensi')
+            .select('id')
+            .eq('mahasiswa_id', selectedIzin.mahasiswa_id)
+            .eq('sesi_id', selectedIzin.sesi_id)
+            .single()
+
+          if (existing) {
+            await supabase.from('presensi').update({ status: 'izin', waktu_absen: new Date().toISOString() }).eq('id', existing.id)
+          } else {
+            await supabase.from('presensi').insert({
+              mahasiswa_id: selectedIzin.mahasiswa_id,
+              sesi_id: selectedIzin.sesi_id,
+              status: 'izin',
+              waktu_absen: new Date().toISOString()
+            })
+          }
+
+        } else if (izinType === 'pulang') {
+          // --- LOGIKA IZIN PULANG (OTOMATIS CARI SESI DALAM RENTANG TANGGAL) ---
+          const { data: sesiList } = await supabase
+            .from('sesi')
+            .select('id, tipe_target, target_audiens')
+            .gte('tanggal', selectedIzin.tgl_pulang)
+            .lte('tanggal', selectedIzin.tgl_kembali)
+
+          if (sesiList && sesiList.length > 0) {
+            const profile = selectedIzin.profiles
+
+            // Saring hanya sesi yang relevan dengan mahasiswa ini
+            const validSesi = sesiList.filter((s: any) => {
+              if (s.tipe_target === 'semua') return true
+              if (s.tipe_target === 'unit' && s.target_audiens?.unit === profile?.unit) return true
+              if (s.tipe_target === 'unit_semester' && s.target_audiens?.unit === profile?.unit && s.target_audiens?.semester === profile?.semester) return true
+              if (s.tipe_target === 'custom' && s.target_audiens?.mahasiswa_ids?.includes(selectedIzin.mahasiswa_id)) return true
+              return false
+            })
+
+            if (validSesi.length > 0) {
+              const sesiIds = validSesi.map(s => s.id)
+              
+              // Cek adakah presensi yang sudah terlanjur ada di sesi-sesi tersebut
+              const { data: existingPresensi } = await supabase
+                .from('presensi')
+                .select('id, sesi_id')
+                .eq('mahasiswa_id', selectedIzin.mahasiswa_id)
+                .in('sesi_id', sesiIds)
+              
+              const existingSesiIds = existingPresensi?.map(e => e.sesi_id) || []
+
+              // Lakukan perulangan untuk insert / update
+              for (const s of validSesi) {
+                if (existingSesiIds.includes(s.id)) {
+                  // Update jika sudah ada
+                  const record = existingPresensi?.find(e => e.sesi_id === s.id)
+                  if (record) {
+                    await supabase.from('presensi').update({ status: 'izin', waktu_absen: new Date().toISOString() }).eq('id', record.id)
+                  }
+                } else {
+                  // Insert jika belum ada
+                  await supabase.from('presensi').insert({
+                    mahasiswa_id: selectedIzin.mahasiswa_id,
+                    sesi_id: s.id,
+                    status: 'izin',
+                    waktu_absen: new Date().toISOString()
+                  })
+                }
+              }
+            }
+          }
+        }
+      } catch (presensiErr) {
+        console.error("Gagal sinkronisasi ke tabel presensi:", presensiErr)
+        // Kita hanya nge-log errornya agar aplikasi tidak crash, karena status izin utamanya sudah berhasil diupdate
+      }
+    }
+
+    toast({
+      title: 'Berhasil',
+      description: status === 'approved' ? 'Perizinan disetujui & Presensi otomatis diatur ke Izin.' : 'Perizinan ditolak (Status presensi menunggu kehadiran aslinya).',
+      variant: 'success'
+    })
+    
+    setSelectedIzin(null)
+    setIzinType(null)
+    setCatatan('')
+    fetchPerizinan() // Refresh data
     setSubmitting(false)
   }
 
