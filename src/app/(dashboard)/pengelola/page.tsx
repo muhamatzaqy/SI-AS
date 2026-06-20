@@ -63,22 +63,21 @@ export default async function PengelolaDashboard() {
     .order('created_at', { ascending: false })
     .limit(5)
 
-  // Fetch presensi (Join berantai: presensi -> sesi -> nama_kegiatan)
+  // PENTING: Fetch presensi diubah karena nama_kegiatan sekarang ada di dalam tabel sesi
   const { data: allPresensi } = await supabase
     .from('presensi')
     .select(`
       status, 
       sesi (
-        nama_kegiatan (
-          nama_kegiatan
-        )
+        nama_kegiatan
       )
     `)
 
   // Hitung rata-rata kehadiran
   const activityStats: Record<string, { nama: string; hadir: number; izin: number; alpha: number }> = {}
   ;(allPresensi ?? []).forEach((p: any) => {
-    const nama = p.sesi?.nama_kegiatan?.nama_kegiatan ?? 'Lainnya'
+    // PENTING: Path untuk memanggil nama_kegiatan disederhanakan
+    const nama = p.sesi?.nama_kegiatan ?? 'Lainnya'
     if (!activityStats[nama]) activityStats[nama] = { nama, hadir: 0, izin: 0, alpha: 0 }
     
     if (p.status === 'hadir') activityStats[nama].hadir++
