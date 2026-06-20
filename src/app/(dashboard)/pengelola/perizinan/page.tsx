@@ -35,12 +35,12 @@ export default function PerizinanPengelolaPage() {
   const fetchPerizinan = useCallback(async () => {
     setLoading(true)
     try {
-      // 1. Fetch Izin Sesi
+      // 1. Fetch Izin Sesi (DENGAN PERBAIKAN FOREIGN KEY)
       let querySesi = supabase
         .from('izin_sesi')
         .select(`
           *,
-          profiles(nama, nim, unit),
+          profiles!izin_sesi_mahasiswa_id_fkey(nama, nim, unit),
           sesi(
             tanggal, 
             jam_mulai, 
@@ -49,12 +49,12 @@ export default function PerizinanPengelolaPage() {
         `)
         .order('created_at', { ascending: false })
 
-      // 2. Fetch Izin Pulang
+      // 2. Fetch Izin Pulang (DENGAN PERBAIKAN FOREIGN KEY)
       let queryPulang = supabase
         .from('izin_pulang')
         .select(`
           *,
-          profiles(nama, nim, unit)
+          profiles!izin_pulang_mahasiswa_id_fkey(nama, nim, unit)
         `)
         .order('created_at', { ascending: false })
 
