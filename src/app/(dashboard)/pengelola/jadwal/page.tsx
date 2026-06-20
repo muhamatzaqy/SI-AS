@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users, Search, CheckCircle2 } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- SKEMA VALIDASI ZOD ---
@@ -49,12 +49,15 @@ export default function JadwalDanMasterPage() {
   const [masterKegiatan, setMasterKegiatan] = useState<any[]>([])
   const [mahasiswaList, setMahasiswaList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // State baru untuk melacak sesi mana saja yang sudah di-Mark Alpha
+  const [markedAlphaSesiIds, setMarkedAlphaSesiIds] = useState<string[]>([])
 
   // --- STATE MODAL SESI ---
   const [dialogSesiOpen, setDialogSesiOpen] = useState(false)
   const [editingSesi, setEditingSesi] = useState<any | null>(null)
   const [submittingSesi, setSubmittingSesi] = useState(false)
-  const [searchMahasiswa, setSearchMahasiswa] = useState('') // State untuk pencarian custom audiens
+  const [searchMahasiswa, setSearchMahasiswa] = useState('') 
 
   // --- STATE MODAL MASTER ---
   const [dialogMasterOpen, setDialogMasterOpen] = useState(false)
@@ -97,7 +100,25 @@ export default function JadwalDanMasterPage() {
       .from('sesi')
       .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis))')
       .order('tanggal', { ascending: false })
+    
     setJadwals(data ?? [])
+    
+    // --- Lacak Sesi yang sudah di-Alpha ---
+    if (data && data.length > 0) {
+      const sesiIds = data.map(d => d.id)
+      const { data: presensiAlpha } = await supabase
+        .from('presensi')
+        .select('sesi_id')
+        .eq('status', 'alpha')
+        .in('sesi_id', sesiIds)
+      
+      if (presensiAlpha) {
+        // Ambil ID unik sesi yang memiliki setidaknya 1 status alpha
+        const uniqueIds = Array.from(new Set(presensiAlpha.map(p => p.sesi_id)))
+        setMarkedAlphaSesiIds(uniqueIds)
+      }
+    }
+    
     setLoading(false)
   }
 
@@ -135,16 +156,15 @@ export default function JadwalDanMasterPage() {
       toast({ title: 'Berhasil ✅', description: `${data.alphaCreated} mahasiswa ditandai ALPHA`, variant: 'success' })
       setMarkAlpaDialogOpen(false)
       setSelectedJadwalForAlpha(null)
-      fetchJadwals()
+      fetchJadwals() // Memuat ulang data agar state markedAlphaSesiIds ter-update
     } catch (error: any) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' })
+      toast({ title: 'Aksi Ditolak', description: error.message, variant: 'destructive' })
     } finally { setMarkAlpaLoading(false) }
   }
 
   const onSubmitSesi = async (data: SesiFormData) => {
     setSubmittingSesi(true)
     try {
-      // 1. Membangun JSONB target_audiens berdasarkan tipe_target
       let targetAudiens = {}
       
       if (data.tipe_target === 'unit') {
@@ -194,7 +214,7 @@ export default function JadwalDanMasterPage() {
 
   const openCreateSesi = () => {
     setEditingSesi(null)
-    setSearchMahasiswa('') // Reset pencarian
+    setSearchMahasiswa('') 
     formSesi.reset({ 
       tipe_target: 'semua', target_unit: '', target_semester: '', target_custom_ids: [], 
       jenis_id: '', nama_kegiatan_id: '', tanggal: '', jam_mulai: '', jam_selesai: '' 
@@ -204,9 +224,8 @@ export default function JadwalDanMasterPage() {
 
   const openEditSesi = (j: any) => {
     setEditingSesi(j)
-    setSearchMahasiswa('') // Reset pencarian
+    setSearchMahasiswa('') 
     
-    // Ekstrak data dari JSONB untuk form
     let mappedUnit = ''
     let mappedSemester = ''
     let mappedCustomIds: string[] = []
@@ -270,7 +289,6 @@ export default function JadwalDanMasterPage() {
     setDialogMasterOpen(true)
   }
 
-  // Helper untuk Table Render
   const getAudiensLabel = (tipe: string, audiens: any) => {
     if (tipe === 'semua') return 'Gabungan (Semua Unit)'
     if (tipe === 'unit') return `Unit: ${formatLabel(audiens?.unit)}`
@@ -319,29 +337,47 @@ export default function JadwalDanMasterPage() {
                 <div className="divide-y">
                   {jadwals.map(j => {
                     const finished = isJadwalFinished(j)
+                    const isMarkedAlpha = markedAlphaSesiIds.includes(j.id)
                     const namaKegiatan = j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui'
                     const jenisKegiatan = j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-'
                     const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
                     
                     return (
-                      <div key={j.id} className="flex items-center justify-between p-4 hover:bg-muted/30 transition-colors">
+                      <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/30 transition-colors">
                         <div className="space-y-1 min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium text-foreground">{namaKegiatan}</p>
+                            <p className="font-medium text-foreground text-base">{namaKegiatan}</p>
                             <Badge variant="secondary" className="font-normal">{jenisKegiatan}</Badge>
                             {finished ? <Badge variant="destructive" className="text-xs">Selesai</Badge> : <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
                           </div>
                           <p className="text-sm text-muted-foreground">
-                            {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} · Peserta: <span className="font-medium text-foreground/80">{audiensLabel}</span>
+                            {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} WIB
+                          </p>
+                          <p className="text-sm">
+                            <span className="text-muted-foreground">Peserta: </span><span className="font-medium text-foreground/80">{audiensLabel}</span>
                           </p>
                         </div>
                         
-                        <div className="flex gap-1 shrink-0 ml-4">
+                        <div className="flex gap-2 shrink-0 items-center">
+                          {/* --- TOMBOL MARK ALPHA --- */}
                           {finished && (
-                            <Button variant="outline" size="icon" title="Tandai Alpha" onClick={() => { setSelectedJadwalForAlpha(j); setMarkAlpaDialogOpen(true) }}>
-                              <AlertCircle className="h-4 w-4 text-orange-600" />
+                            <Button 
+                              variant={isMarkedAlpha ? "secondary" : "outline"}
+                              size="sm" 
+                              onClick={() => { setSelectedJadwalForAlpha(j); setMarkAlpaDialogOpen(true) }}
+                              disabled={isMarkedAlpha}
+                              className={isMarkedAlpha ? "bg-muted text-muted-foreground opacity-70" : "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"}
+                            >
+                              {isMarkedAlpha ? (
+                                <><CheckCircle2 className="h-4 w-4 mr-1.5" /> Sudah Ditandai</>
+                              ) : (
+                                <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha</>
+                              )}
                             </Button>
                           )}
+                          
+                          <div className="h-8 w-px bg-border mx-1 hidden md:block"></div>
+
                           <Button variant="ghost" size="icon" onClick={() => openEditSesi(j)}><Pencil className="h-4 w-4 text-blue-600" /></Button>
                           <Button variant="ghost" size="icon" onClick={() => deleteSesi(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                         </div>
@@ -530,14 +566,12 @@ export default function JadwalDanMasterPage() {
                       <p className="text-xs text-muted-foreground text-center py-4">Tidak ada data mahasiswa aktif.</p>
                     ) : (
                       mahasiswaList.map(m => {
-                        // Logika filter (menyembunyikan yang tidak cocok)
                         const isMatch = m.nama.toLowerCase().includes(searchMahasiswa.toLowerCase()) || 
                                         m.nim.toLowerCase().includes(searchMahasiswa.toLowerCase());
                         
                         return (
                           <label 
                             key={m.id} 
-                            // Gunakan CSS 'hidden' agar data checkbox di balik layar tidak terhapus (tetap ter-register oleh formSesi)
                             className={`flex items-center space-x-3 hover:bg-muted/50 p-2 rounded cursor-pointer transition-colors ${isMatch ? '' : 'hidden'}`}
                           >
                             <input 
@@ -617,16 +651,24 @@ export default function JadwalDanMasterPage() {
       {markAlpaDialogOpen && selectedJadwalForAlpha && (
         <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
           <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Tandai Kehadiran sebagai ALPHA?</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle className="flex items-center text-orange-700">
+                <AlertCircle className="h-5 w-5 mr-2" />
+                Konfirmasi Tandai Alpha
+              </DialogTitle>
+            </DialogHeader>
             <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Tindakan ini akan secara otomatis memberikan status <b>"Alpha"</b> kepada seluruh mahasiswa yang menjadi target audiens sesi ini, yang <b>belum melakukan absensi</b> atau <b>belum mengajukan izin</b>.
+              </p>
               <div className="rounded-lg bg-orange-50 border border-orange-200 p-3 space-y-1">
-                <p className="text-sm font-medium text-orange-900">{selectedJadwalForAlpha.nama_kegiatan?.nama_kegiatan}</p>
-                <p className="text-xs text-orange-700">{formatDate(selectedJadwalForAlpha.tanggal)} · {selectedJadwalForAlpha.jam_mulai.slice(0,5)}</p>
+                <p className="text-sm font-semibold text-orange-900">{selectedJadwalForAlpha.nama_kegiatan?.nama_kegiatan}</p>
+                <p className="text-xs text-orange-800">{formatDate(selectedJadwalForAlpha.tanggal)} · Jam {selectedJadwalForAlpha.jam_mulai.slice(0,5)} WIB</p>
               </div>
               <div className="flex gap-3 pt-2">
                 <Button variant="outline" className="flex-1" onClick={() => setMarkAlpaDialogOpen(false)} disabled={markAlpaLoading}>Batal</Button>
-                <Button className="flex-1" onClick={handleMarkAlpha} disabled={markAlpaLoading}>
-                  {markAlpaLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertCircle className="mr-2 h-4 w-4" />} Konfirmasi
+                <Button className="flex-1 bg-orange-600 hover:bg-orange-700 text-white" onClick={handleMarkAlpha} disabled={markAlpaLoading}>
+                  {markAlpaLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />} Ya, Tandai Alpha
                 </Button>
               </div>
             </div>
