@@ -20,6 +20,10 @@ import { useToast } from '@/hooks/use-toast'
 import { Plus, Loader2, CalendarDays, Home, Info, AlertCircle } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
+// --- PENGATURAN WHATSAPP PENGURUS ---
+// Gunakan format kode negara (62) tanpa tanda plus atau angka 0 di depan
+const PENGURUS_WA_NUMBER = '6281234567890' 
+
 // --- SKEMA VALIDASI ZOD LOKAL ---
 const izinSesiSchema = z.object({
   sesi_id: z.string().min(1, "Pilih jadwal sesi yang akan ditinggalkan"),
@@ -41,10 +45,9 @@ type IzinPulangFormData = z.infer<typeof izinPulangSchema>
 export default function PerizinanMahasiswaPage() {
   const [izinSesiData, setIzinSesiData] = useState<any[]>([])
   const [izinPulangData, setIzinPulangData] = useState<any[]>([])
-  const [jadwals, setJadwals] = useState<any[]>([]) // Untuk dropdown sesi
-  
-  // State untuk melacak ID sesi yang sudah diabsen atau diajukan izinnya
+  const [jadwals, setJadwals] = useState<any[]>([]) 
   const [sesiSudahDiabsen, setSesiSudahDiabsen] = useState<string[]>([])
+  const [userProfile, setUserProfile] = useState<any>(null) // State baru untuk menyimpan data diri mahasiswa
   
   const [loading, setLoading] = useState(true)
 
@@ -57,7 +60,6 @@ export default function PerizinanMahasiswaPage() {
   const { toast } = useToast()
   const supabase = createClient()
 
-  // Form Handlers
   const formSesi = useForm<IzinSesiFormData>({ resolver: zodResolver(izinSesiSchema) })
   const formPulang = useForm<IzinPulangFormData>({ resolver: zodResolver(izinPulangSchema) })
 
@@ -70,10 +72,10 @@ export default function PerizinanMahasiswaPage() {
     }
 
     try {
-      // 1. Ambil Profil Mahasiswa (untuk filter sesi)
-      const { data: profile } = await supabase.from('profiles').select('unit, semester').eq('id', user.id).single()
+      // Ambil Profil Mahasiswa beserta Nama dan NIM untuk Wording WA
+      const { data: profile } = await supabase.from('profiles').select('nama, nim, unit, semester').eq('id', user.id).single()
+      setUserProfile(profile)
 
-      // 2. Ambil Riwayat Izin
       const [resSesi, resPulang] = await Promise.all([
         supabase
           .from('izin_sesi')
@@ -91,18 +93,15 @@ export default function PerizinanMahasiswaPage() {
       setIzinSesiData(dataIzinSesi)
       setIzinPulangData(resPulang.data ?? [])
 
-      // 3. Ambil data Presensi yang sudah dilakukan mahasiswa ini
       const { data: presensiMahasiswa } = await supabase
         .from('presensi')
         .select('sesi_id')
         .eq('mahasiswa_id', user.id)
 
-      // Gabungkan ID Sesi yang SUDAH diabsen atau SUDAH diajukan izinnya
       const sudahAbsenIds = (presensiMahasiswa ?? []).map(p => p.sesi_id)
       const sudahIzinIds = dataIzinSesi.map(i => i.sesi_id)
       setSesiSudahDiabsen([...sudahAbsenIds, ...sudahIzinIds])
 
-      // 4. Ambil Jadwal Sesi ke depan untuk Dropdown Izin Sesi
       const today = new Date().toISOString().split('T')[0]
       const { data: sesiList } = await supabase
         .from('sesi')
@@ -110,7 +109,6 @@ export default function PerizinanMahasiswaPage() {
         .gte('tanggal', today)
         .order('tanggal', { ascending: true })
 
-      // Filter sesi sesuai unit mahasiswa (seperti di absensi)
       const validSesi = (sesiList ?? []).filter((s: any) => {
         if (s.tipe_target === 'semua') return true
         if (s.tipe_target === 'unit' && s.target_audiens?.unit === profile?.unit) return true
@@ -120,7 +118,6 @@ export default function PerizinanMahasiswaPage() {
 
       setJadwals(validSesi)
     } catch (error) {
-      console.error('Error fetching data:', error)
       toast({ title: 'Error', description: 'Gagal memuat data perizinan', variant: 'destructive' })
     } finally {
       setLoading(false)
@@ -129,11 +126,10 @@ export default function PerizinanMahasiswaPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // --- SUBMIT IZIN SESI ---
+  // --- SUBMIT IZIN SESI & ARAHKAN KE WA ---
   const onSubmitSesi = async (data: IzinSesiFormData) => {
-    // Validasi Ganda (Mencegah Bypass)
     if (sesiSudahDiabsen.includes(data.sesi_id)) {
-      toast({ title: 'Aksi Ditolak', description: 'Anda sudah tercatat absen atau sedang mengajukan izin untuk sesi ini.', variant: 'destructive' })
+      toast({ title: 'Aksi Ditolak', description: 'Anda sudah tercatat absen/izin untuk sesi ini.', variant: 'destructive' })
       return
     }
 
@@ -151,7 +147,20 @@ export default function PerizinanMahasiswaPage() {
 
       if (error) throw error
 
-      toast({ title: 'Berhasil', description: 'Izin sesi berhasil diajukan', variant: 'success' })
+      toast({ title: 'Berhasil', description: 'Izin diajukan. Mengarahkan ke WhatsApp...', variant: 'success' })
+      
+      // Ambil detail sesi yang dipilih untuk dimasukkan ke teks WA
+      const selectedSesi = jadwals.find(j => j.id === data.sesi_id)
+      const namaKajian = selectedSesi?.nama_kegiatan?.nama_kegiatan ?? '-'
+      const tanggalKajian = selectedSesi?.tanggal ? formatDate(selectedSesi.tanggal) : '-'
+      const jamKajian = selectedSesi?.jam_mulai?.slice(0,5) ?? '-'
+
+      // Format Wording WA Izin Sesi
+      const waText = `Assalamu'alaikum, Pengurus Asrama.\n\nSaya ingin mengonfirmasi pengajuan *IZIN SESI KEGIATAN* di aplikasi SI-ASRAMA.\n\n*Data Mahasiswa:*\nNama: ${userProfile?.nama}\nNIM: ${userProfile?.nim}\n\n*Detail Izin:*\nKegiatan: ${namaKajian}\nJadwal: ${tanggalKajian} (Jam ${jamKajian})\nAlasan: ${data.alasan_izin}\n\nBerikut saya lampirkan foto/dokumen bukti perizinan saya. Mohon untuk direview. Terima kasih. 🙏`
+      
+      // Membuka tab WhatsApp
+      window.open(`https://wa.me/${PENGURUS_WA_NUMBER}?text=${encodeURIComponent(waText)}`, '_blank')
+
       setDialogSesiOpen(false)
       formSesi.reset()
       fetchData()
@@ -162,7 +171,7 @@ export default function PerizinanMahasiswaPage() {
     }
   }
 
-  // --- SUBMIT IZIN PULANG ---
+  // --- SUBMIT IZIN PULANG & ARAHKAN KE WA ---
   const onSubmitPulang = async (data: IzinPulangFormData) => {
     setSubmittingPulang(true)
     try {
@@ -179,7 +188,14 @@ export default function PerizinanMahasiswaPage() {
 
       if (error) throw error
 
-      toast({ title: 'Berhasil', description: 'Izin pulang berhasil diajukan', variant: 'success' })
+      toast({ title: 'Berhasil', description: 'Izin diajukan. Mengarahkan ke WhatsApp...', variant: 'success' })
+      
+      // Format Wording WA Izin Pulang
+      const waText = `Assalamu'alaikum, Pengurus Asrama.\n\nSaya ingin mengonfirmasi pengajuan *IZIN PULANG ASRAMA* di aplikasi SI-ASRAMA.\n\n*Data Mahasiswa:*\nNama: ${userProfile?.nama}\nNIM: ${userProfile?.nim}\n\n*Detail Izin:*\nBerangkat: ${formatDate(data.tgl_pulang)}\nKembali: ${formatDate(data.tgl_kembali)}\nKeterangan: ${data.keterangan}\n\nBerikut saya lampirkan bukti pendukung (jika ada). Mohon izinnya untuk direview. Terima kasih. 🙏`
+
+      // Membuka tab WhatsApp
+      window.open(`https://wa.me/${PENGURUS_WA_NUMBER}?text=${encodeURIComponent(waText)}`, '_blank')
+
       setDialogPulangOpen(false)
       formPulang.reset()
       fetchData()
@@ -190,7 +206,6 @@ export default function PerizinanMahasiswaPage() {
     }
   }
 
-  // Menentukan mana jadwal yang bisa dipilih di dropdown (disaring)
   const availableJadwals = jadwals.filter(j => !sesiSudahDiabsen.includes(j.id))
 
   return (
@@ -330,7 +345,6 @@ export default function PerizinanMahasiswaPage() {
               />
               {formSesi.formState.errors.sesi_id && <p className="text-xs text-red-500">{formSesi.formState.errors.sesi_id.message}</p>}
               
-              {/* Pesan Info jika ada jadwal yang disembunyikan */}
               {jadwals.length > availableJadwals.length && (
                 <div className="flex items-start gap-2 mt-2 text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-100">
                   <AlertCircle className="h-4 w-4 shrink-0" />
@@ -348,9 +362,14 @@ export default function PerizinanMahasiswaPage() {
               />
               {formSesi.formState.errors.alasan_izin && <p className="text-xs text-red-500">{formSesi.formState.errors.alasan_izin.message}</p>}
             </div>
+            
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs text-blue-800 flex gap-2 items-start mt-2">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <p>Setelah menekan tombol ini, Anda akan <b>diarahkan ke WhatsApp</b> pengurus untuk mengirimkan bukti foto (surat sakit/dll).</p>
+            </div>
 
             <Button type="submit" className="w-full" disabled={submittingSesi}>
-              {submittingSesi ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Ajukan Izin Sesi
+              {submittingSesi ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Ajukan & Buka WhatsApp
             </Button>
           </form>
         </DialogContent>
@@ -387,8 +406,13 @@ export default function PerizinanMahasiswaPage() {
               {formPulang.formState.errors.keterangan && <p className="text-xs text-red-500">{formPulang.formState.errors.keterangan.message}</p>}
             </div>
 
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs text-blue-800 flex gap-2 items-start mt-2">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <p>Setelah menekan tombol ini, Anda akan <b>diarahkan ke WhatsApp</b> pengurus untuk mengirimkan bukti persetujuan orang tua (jika ada).</p>
+            </div>
+
             <Button type="submit" className="w-full" disabled={submittingPulang}>
-              {submittingPulang ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Ajukan Izin Pulang
+              {submittingPulang ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Ajukan & Buka WhatsApp
             </Button>
           </form>
         </DialogContent>
