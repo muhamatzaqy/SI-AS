@@ -1,10 +1,18 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { StatCard } from '@/components/shared/stat-card'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Calendar, CreditCard, AlertTriangle, BarChart3 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu'
+import { Calendar, CreditCard, AlertTriangle, BarChart3, User, LogOut, Settings } from 'lucide-react'
 import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
 
 export default async function MahasiswaDashboard() {
@@ -71,12 +79,46 @@ export default async function MahasiswaDashboard() {
   })
   const activityBreakdown = Object.values(activityMap)
 
+  // --- SERVER ACTION UNTUK LOGOUT ---
+  const handleLogout = async () => {
+    'use server'
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    redirect('/login')
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader 
-        title={`Halo, ${profile?.nama?.split(' ')[0] ?? 'Mahasiswa'}!`} 
-        description={`Hari ini ${formatDate(new Date())}`} 
-      />
+      
+      {/* HEADER DENGAN MENU PROFIL DROPDOWN */}
+      <div className="flex justify-between items-start">
+        <PageHeader 
+          title={`Halo, ${profile?.nama?.split(' ')[0] ?? 'Mahasiswa'}!`} 
+          description={`Hari ini ${formatDate(new Date())}`} 
+        />
+        
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2 mt-1">
+              <User className="h-4 w-4" /> Profil
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem asChild className="cursor-pointer">
+              <Link href="/mahasiswa/profil">
+                <Settings className="mr-2 h-4 w-4" /> Edit Profil
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
+              <form action={handleLogout} className="w-full">
+                <button type="submit" className="flex w-full items-center">
+                  <LogOut className="mr-2 h-4 w-4" /> Keluar
+                </button>
+              </form>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         <StatCard 
