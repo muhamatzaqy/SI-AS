@@ -5,7 +5,6 @@ import { StatCard } from '@/components/shared/stat-card'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
@@ -98,20 +97,19 @@ export default async function MahasiswaDashboard() {
         />
         
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="gap-2 mt-1">
-              <User className="h-4 w-4" /> Profil
-            </Button>
+          {/* Hapus asChild dan gunakan styling tombol bawaan Tailwind */}
+          <DropdownMenuTrigger className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-input bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring gap-2 mt-1">
+            <User className="h-4 w-4" /> Profil
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem asChild className="cursor-pointer">
-              <Link href="/mahasiswa/profil">
+            <DropdownMenuItem className="cursor-pointer">
+              <Link href="/mahasiswa/profil" className="flex w-full items-center">
                 <Settings className="mr-2 h-4 w-4" /> Edit Profil
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem asChild className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
+            <DropdownMenuItem className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
               <form action={handleLogout} className="w-full">
-                <button type="submit" className="flex w-full items-center">
+                <button type="submit" className="flex w-full items-center text-left">
                   <LogOut className="mr-2 h-4 w-4" /> Keluar
                 </button>
               </form>
