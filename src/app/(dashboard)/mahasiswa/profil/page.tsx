@@ -14,12 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 
-// Skema validasi yang menyertakan semester
+// Skema validasi disesuaikan agar lebih fleksibel dengan data null dari DB
 const profileSchema = z.object({
-  nama: z.string().min(3, "Nama minimal 3 karakter"),
-  nim: z.string().min(5, "NIM tidak valid"),
-  angkatan: z.coerce.number().min(2000, "Tahun tidak valid"),
-  semester: z.string().min(1, "Semester wajib dipilih"),
+  nama: z.string().min(3, "Nama minimal harus 3 karakter"),
+  nim: z.string().min(5, "NIM minimal harus 5 karakter"),
+  angkatan: z.coerce.number().min(2000, "Tahun angkatan tidak valid"),
+  semester: z.string({ required_error: "Semester wajib dipilih" }).min(1, "Semester wajib dipilih"),
 })
 
 export default function EditProfilPage() {
@@ -30,25 +30,38 @@ export default function EditProfilPage() {
 
   const form = useForm({ 
     resolver: zodResolver(profileSchema),
-    defaultValues: { nama: '', nim: '', angkatan: 2024, semester: '' }
+    defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '' }
   })
+
+  // Membaca object errors dari react-hook-form
+  const { errors } = form.formState
 
   useEffect(() => {
     async function loadProfile() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+
         const { data, error } = await supabase
           .from('profiles')
           .select('nama, nim, angkatan, semester')
           .eq('id', user.id)
           .single()
         
+        if (error) throw error
+
         if (data) {
+          // Reset form dengan default fallback agar input tidak menjadi 'uncontrolled'
           form.reset({
-            ...data,
+            nama: data.nama || '',
+            nim: data.nim || '',
+            angkatan: data.angkatan || new Date().getFullYear(),
             semester: data.semester ? data.semester.toString() : ''
           })
         }
+      } catch (error: any) {
+        console.error('Error loading profile:', error.message)
+      } finally {
         setLoading(false)
       }
     }
@@ -57,25 +70,33 @@ export default function EditProfilPage() {
 
   const onSubmit = async (data: any) => {
     setSubmitting(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    
-    // Konversi semester kembali ke integer sebelum kirim ke DB
-    const payload = { ...data, semester: parseInt(data.semester) }
-    
-    const { error } = await supabase
-      .from('profiles')
-      .update(payload)
-      .eq('id', user?.id)
-    
-    if (error) {
-      toast({ title: 'Gagal', description: error.message, variant: 'destructive' })
-    } else {
-      toast({ title: 'Berhasil', description: 'Profil berhasil diperbarui' })
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error("Sesi tidak valid, harap login kembali")
+      
+      const payload = { 
+        nama: data.nama,
+        nim: data.nim,
+        angkatan: data.angkatan,
+        semester: parseInt(data.semester) 
+      }
+      
+      const { error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .eq('id', user.id)
+      
+      if (error) throw error
+
+      toast({ title: 'Berhasil ✅', description: 'Profil berhasil diperbarui', variant: 'success' })
+    } catch (error: any) {
+      toast({ title: 'Gagal', description: error.message || "Gagal memperbarui profil", variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
     }
-    setSubmitting(false)
   }
 
-  if (loading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin" /></div>
+  if (loading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin text-primary" /></div>
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
@@ -83,19 +104,26 @@ export default function EditProfilPage() {
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            
             <div className="space-y-2">
               <Label>Nama Lengkap</Label>
-              <Input {...form.register('nama')} />
+              <Input {...form.register('nama')} className={errors.nama ? "border-red-500" : ""} />
+              {errors.nama && <p className="text-xs text-red-500">{errors.nama.message as string}</p>}
             </div>
+            
             <div className="space-y-2">
               <Label>NIM</Label>
-              <Input {...form.register('nim')} />
+              <Input {...form.register('nim')} className={errors.nim ? "border-red-500" : ""} />
+              {errors.nim && <p className="text-xs text-red-500">{errors.nim.message as string}</p>}
             </div>
+            
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Angkatan</Label>
-                <Input type="number" {...form.register('angkatan')} />
+                <Input type="number" {...form.register('angkatan')} className={errors.angkatan ? "border-red-500" : ""} />
+                {errors.angkatan && <p className="text-xs text-red-500">{errors.angkatan.message as string}</p>}
               </div>
+              
               <div className="space-y-2">
                 <Label>Semester</Label>
                 <Controller 
@@ -103,18 +131,23 @@ export default function EditProfilPage() {
                   name="semester" 
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger><SelectValue placeholder="Pilih Semester" /></SelectTrigger>
+                      <SelectTrigger className={errors.semester ? "border-red-500" : ""}>
+                        <SelectValue placeholder="Pilih Semester" />
+                      </SelectTrigger>
                       <SelectContent>
                         {[1,2,3,4,5,6,7,8].map(s => <SelectItem key={s} value={s.toString()}>{s}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   )}
                 />
+                {errors.semester && <p className="text-xs text-red-500">{errors.semester.message as string}</p>}
               </div>
             </div>
-            <Button className="w-full" disabled={submitting}>
+            
+            <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Simpan Perubahan'}
             </Button>
+            
           </form>
         </CardContent>
       </Card>
