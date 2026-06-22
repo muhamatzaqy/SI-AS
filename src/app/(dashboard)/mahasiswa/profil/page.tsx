@@ -14,12 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 
-// Skema validasi disesuaikan agar lebih fleksibel dengan data null dari DB
+// Skema validasi diselaraskan dengan tipe data tabel profiles
 const profileSchema = z.object({
   nama: z.string().min(3, "Nama minimal harus 3 karakter"),
   nim: z.string().min(5, "NIM minimal harus 5 karakter"),
   angkatan: z.coerce.number().min(2000, "Tahun angkatan tidak valid"),
-  semester: z.string({ required_error: "Semester wajib dipilih" }).min(1, "Semester wajib dipilih"),
+  semester: z.string().min(1, "Semester wajib dipilih"),
 })
 
 export default function EditProfilPage() {
@@ -33,7 +33,6 @@ export default function EditProfilPage() {
     defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '' }
   })
 
-  // Membaca object errors dari react-hook-form
   const { errors } = form.formState
 
   useEffect(() => {
@@ -51,7 +50,6 @@ export default function EditProfilPage() {
         if (error) throw error
 
         if (data) {
-          // Reset form dengan default fallback agar input tidak menjadi 'uncontrolled'
           form.reset({
             nama: data.nama || '',
             nim: data.nim || '',
@@ -59,8 +57,8 @@ export default function EditProfilPage() {
             semester: data.semester ? data.semester.toString() : ''
           })
         }
-      } catch (error: any) {
-        console.error('Error loading profile:', error.message)
+      } catch (err: any) {
+        console.error('Gagal mengambil data profil:', err.message)
       } finally {
         setLoading(false)
       }
@@ -68,11 +66,12 @@ export default function EditProfilPage() {
     loadProfile()
   }, [supabase, form])
 
+  // SOS: Fungsi ini akan berjalan JIKA kiriman data lolos validasi Zod
   const onSubmit = async (data: any) => {
     setSubmitting(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error("Sesi tidak valid, harap login kembali")
+      if (!user) throw new Error("Sesi habis, silakan login kembali.")
       
       const payload = { 
         nama: data.nama,
@@ -88,12 +87,27 @@ export default function EditProfilPage() {
       
       if (error) throw error
 
-      toast({ title: 'Berhasil ✅', description: 'Profil berhasil diperbarui', variant: 'success' })
-    } catch (error: any) {
-      toast({ title: 'Gagal', description: error.message || "Gagal memperbarui profil", variant: 'destructive' })
+      toast({ title: 'Berhasil ✅', description: 'Profil Anda berhasil diperbarui' })
+    } catch (err: any) {
+      toast({ title: 'Gagal Menyimpan', description: err.message, variant: 'destructive' })
     } finally {
       setSubmitting(false)
     }
+  }
+
+  // SOS: Fungsi ini otomatis berjalan JIKA tombol ditekan tapi ada validasi yang GAGAL
+  const onValidationError = (formErrors: any) => {
+    console.log("Kelemahan Validasi Form:", formErrors)
+    
+    // Memunculkan pesan error spesifik kolom mana yang bermasalah lewat Toast
+    const firstErrorField = Object.keys(formErrors)[0]
+    const errorMessage = formErrors[firstErrorField]?.message || "Periksa kembali isian Anda."
+    
+    toast({
+      title: "Gagal Mengirim Form ❌",
+      description: `${firstErrorField.toUpperCase()}: ${errorMessage}`,
+      variant: "destructive"
+    })
   }
 
   if (loading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin text-primary" /></div>
@@ -103,7 +117,8 @@ export default function EditProfilPage() {
       <PageHeader title="Edit Profil" description="Perbarui informasi diri Anda" />
       <Card>
         <CardContent className="pt-6">
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {/* Daftarkan onSubmit dan onValidationError di sini */}
+          <form onSubmit={form.handleSubmit(onSubmit, onValidationError)} className="space-y-4">
             
             <div className="space-y-2">
               <Label>Nama Lengkap</Label>
@@ -135,7 +150,9 @@ export default function EditProfilPage() {
                         <SelectValue placeholder="Pilih Semester" />
                       </SelectTrigger>
                       <SelectContent>
-                        {[1,2,3,4,5,6,7,8].map(s => <SelectItem key={s} value={s.toString()}>{s}</SelectItem>)}
+                        {[1,2,3,4,5,6,7,8].map(s => (
+                          <SelectItem key={s} value={s.toString()}>{s}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   )}
