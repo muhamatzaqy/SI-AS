@@ -2,7 +2,10 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
+
+// IMPORT WADAH TOAST RESMI SHADCN DI SINI
+import { Toaster } from "@/components/ui/toaster" 
 
 const geistSans = GeistSans;
 const geistMono = GeistMono;
@@ -23,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="id" className={cn("font-sans scroll-smooth", geistSans.variable)}>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
+        <Toaster /> {/* LETAKKAN DI BAWAH CHILDREN */}
       </body>
     </html>
   )
