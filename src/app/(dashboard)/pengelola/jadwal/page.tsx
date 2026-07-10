@@ -63,6 +63,9 @@ export default function JadwalDanMasterPage() {
   const [markAlpaDialogOpen, setMarkAlpaDialogOpen] = useState(false)
   const [selectedJadwalForAlpha, setSelectedJadwalForAlpha] = useState<any | null>(null)
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
+  
+  // STATE BARU: Untuk efek loading (Mengecek...) saat tombol Tandai Alpha ditekan
+  const [checkingAlphaId, setCheckingAlphaId] = useState<string | null>(null)
 
   const formSesi = useForm<SesiFormData>({ 
     resolver: zodResolver(sesiFormSchema), defaultValues: { tipe_target: 'semua', target_custom_ids: [] }
@@ -133,6 +136,38 @@ export default function JadwalDanMasterPage() {
     } catch { return false }
   }
 
+  // FUNGSI BARU: Mencegat dan mengecek izin sebelum modal terbuka
+  const handleOpenMarkAlpha = async (jadwal: any) => {
+    setCheckingAlphaId(jadwal.id)
+    try {
+      // Cek apakah di sesi ini ada perizinan yang masih berstatus 'pending'
+      const { count, error } = await supabase
+        .from('izin_sesi')
+        .select('*', { count: 'exact', head: true })
+        .eq('sesi_id', jadwal.id)
+        .eq('status', 'pending')
+        
+      if (error) throw error
+
+      if (count && count > 0) {
+        toast({
+          title: 'Aksi Tertahan ⚠️',
+          description: `Masih ada ${count} pengajuan izin yang PENDING. Silakan setujui atau tolak di menu Perizinan terlebih dahulu.`,
+          variant: 'destructive'
+        })
+        return // Hentikan eksekusi, modal tidak akan terbuka
+      }
+      
+      // Jika aman, buka modal
+      setSelectedJadwalForAlpha(jadwal)
+      setMarkAlpaDialogOpen(true)
+    } catch (err: any) {
+      toast({ title: 'Error', description: 'Gagal mengecek status perizinan', variant: 'destructive' })
+    } finally {
+      setCheckingAlphaId(null)
+    }
+  }
+
   const handleMarkAlpha = async () => {
     if (!selectedJadwalForAlpha) return
     setMarkAlpaLoading(true)
@@ -145,7 +180,6 @@ export default function JadwalDanMasterPage() {
       
       if (!response.ok) throw new Error(data.error || 'Gagal menandai alpha')
       
-      // PERBAIKAN: Menangani notifikasi jika tidak ada yang dialpha-kan (hadir/izin semua)
       if (data.alphaCreated === 0) {
         toast({ 
           title: 'Sudah Lengkap ✨', 
@@ -161,7 +195,6 @@ export default function JadwalDanMasterPage() {
 
       setMarkAlpaDialogOpen(false)
       
-      // PERBAIKAN: Langsung kunci tombol secara lokal tanpa perlu fetch ulang (menghindari blokir RLS)
       setMarkedAlphaSesiIds(prev => [...prev, selectedJadwalForAlpha.id])
       setSelectedJadwalForAlpha(null)
       
@@ -366,15 +399,18 @@ export default function JadwalDanMasterPage() {
                         </div>
                         
                         <div className="flex gap-2 shrink-0 items-center">
+                          {/* --- TOMBOL TANDAI ALPHA DIPERBARUI --- */}
                           {finished && (
                             <Button 
                               variant={isMarkedAlpha ? "secondary" : "outline"}
                               size="sm" 
-                              onClick={() => { setSelectedJadwalForAlpha(j); setMarkAlpaDialogOpen(true) }}
-                              disabled={isMarkedAlpha}
+                              onClick={() => handleOpenMarkAlpha(j)}
+                              disabled={isMarkedAlpha || checkingAlphaId === j.id}
                               className={isMarkedAlpha ? "bg-muted text-muted-foreground opacity-70" : "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"}
                             >
-                              {isMarkedAlpha ? (
+                              {checkingAlphaId === j.id ? (
+                                <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Mengecek...</>
+                              ) : isMarkedAlpha ? (
                                 <><CheckCircle2 className="h-4 w-4 mr-1.5" /> Sudah Ditandai</>
                               ) : (
                                 <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha</>
