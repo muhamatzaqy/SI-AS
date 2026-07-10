@@ -144,5 +144,3 @@ export default function RiwayatPage() {
     </div>
   )
 }
-
-```
