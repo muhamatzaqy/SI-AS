@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // --- CEK VALIDASI IZIN PENDING ---
-    const { count, error: countErr } = await supabase
+    const { count: pendingCount, error: countErr } = await supabase
       .from('izin_sesi')
       .select('*', { count: 'exact', head: true })
       .eq('sesi_id', jadwal_id)
@@ -22,9 +22,9 @@ export async function POST(req: Request) {
 
     if (countErr) throw countErr
 
-    if (count && count > 0) {
+    if (pendingCount && pendingCount > 0) {
       return NextResponse.json({ 
-        error: `Terdapat ${count} pengajuan izin yang masih PENDING. Harap setujui atau tolak izin tersebut di menu Perizinan terlebih dahulu!` 
+        error: `Terdapat ${pendingCount} pengajuan izin yang masih PENDING. Harap setujui atau tolak izin tersebut di menu Perizinan terlebih dahulu!` 
       }, { status: 400 })
     }
     // ----------------------------------
@@ -50,29 +50,64 @@ export async function POST(req: Request) {
        return NextResponse.json({ alphaCreated: 0, message: 'Tidak ada target mahasiswa untuk sesi ini' })
     }
 
-    // 3. Ambil data presensi yang sudah masuk (Hadir/Izin/Alpha)
+    // 3. Ambil data presensi yang sudah masuk (Hadir/Izin/Alpha yang sudah ada)
     const { data: presensiMasuk } = await supabase.from('presensi').select('mahasiswa_id').eq('sesi_id', jadwal_id)
     const sudahAbsenIds = (presensiMasuk || []).map((p: any) => p.mahasiswa_id)
 
-    // 4. Cari mahasiswa yang SEHARUSNYA hadir tapi belum ada di presensi
+    // PERBAIKAN: Ambil daftar mahasiswa yang izinnya sudah APPROVED
+    const { data: izinApproved } = await supabase
+      .from('izin_sesi')
+      .select('mahasiswa_id')
+      .eq('sesi_id', jadwal_id)
+      .eq('status', 'approved')
+    
+    const izinApprovedIds = (izinApproved || []).map((i: any) => i.mahasiswa_id)
+
+    // 4. Cari mahasiswa yang belum ada di tabel presensi
     const belumAbsen = targetMahasiswa.filter(m => !sudahAbsenIds.includes(m.id))
 
     if (belumAbsen.length === 0) {
        return NextResponse.json({ alphaCreated: 0, message: 'Semua mahasiswa sudah memiliki status kehadiran' })
     }
 
-    // 5. Masukkan ke database sebagai Alpha
-    const insertData = belumAbsen.map(m => ({
-      mahasiswa_id: m.id,
-      sesi_id: jadwal_id,
-      status: 'alpha',
-      waktu_absen: new Date().toISOString()
-    }))
+    // 5. Pisahkan mana yang berhak mendapat 'Izin' dan mana yang benar-benar 'Alpha'
+    const insertData: any[] = []
+    let totalAlphaCounter = 0
 
-    const { error: insErr } = await supabase.from('presensi').insert(insertData)
-    if (insErr) throw insErr
+    const waktuSekarang = new Date().toISOString()
 
-    return NextResponse.json({ alphaCreated: belumAbsen.length, message: 'Success' })
+    belumAbsen.forEach(m => {
+      // Jika ID mahasiswa ada di daftar izin yang di-approve, beri status 'izin'
+      if (izinApprovedIds.includes(m.id)) {
+        insertData.push({
+          mahasiswa_id: m.id,
+          sesi_id: jadwal_id,
+          status: 'izin',
+          waktu_absen: waktuSekarang
+        })
+      } 
+      // Jika tidak ada di daftar izin sama sekali, baru beri status 'alpha'
+      else {
+        insertData.push({
+          mahasiswa_id: m.id,
+          sesi_id: jadwal_id,
+          status: 'alpha',
+          waktu_absen: waktuSekarang
+        })
+        totalAlphaCounter++
+      }
+    })
+
+    // 6. Masukkan semua data ke database sekaligus
+    if (insertData.length > 0) {
+      const { error: insErr } = await supabase.from('presensi').insert(insertData)
+      if (insErr) throw insErr
+    }
+
+    return NextResponse.json({ 
+      alphaCreated: totalAlphaCounter, 
+      message: 'Success' 
+    })
 
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })
