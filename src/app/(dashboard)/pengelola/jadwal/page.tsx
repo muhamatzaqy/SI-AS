@@ -49,8 +49,6 @@ export default function JadwalDanMasterPage() {
   const [mahasiswaList, setMahasiswaList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   
-  const [markedAlphaSesiIds, setMarkedAlphaSesiIds] = useState<string[]>([])
-
   const [dialogSesiOpen, setDialogSesiOpen] = useState(false)
   const [editingSesi, setEditingSesi] = useState<any | null>(null)
   const [submittingSesi, setSubmittingSesi] = useState(false)
@@ -63,8 +61,6 @@ export default function JadwalDanMasterPage() {
   const [markAlpaDialogOpen, setMarkAlpaDialogOpen] = useState(false)
   const [selectedJadwalForAlpha, setSelectedJadwalForAlpha] = useState<any | null>(null)
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
-  
-  // STATE BARU: Untuk efek loading (Mengecek...) saat tombol Tandai Alpha ditekan
   const [checkingAlphaId, setCheckingAlphaId] = useState<string | null>(null)
 
   const formSesi = useForm<SesiFormData>({ 
@@ -79,40 +75,28 @@ export default function JadwalDanMasterPage() {
     resolver: zodResolver(masterFormSchema)
   })
 
+  // PERBAIKAN: Mengambil semester dan mengubah aturan filter is_active
   const fetchMasterData = async () => {
     const [resJenis, resKegiatan, resMahasiswa] = await Promise.all([
       supabase.from('jenis_kegiatan').select('*').order('nama_jenis'),
       supabase.from('nama_kegiatan').select('*, jenis_kegiatan(nama_jenis)').order('nama_kegiatan'),
-      supabase.from('profiles').select('id, nama, nim, unit').eq('role', 'mahasiswa').eq('is_active', true).order('nama')
+      // neq('is_active', false) memastikan data null tetap ikut terbaca sebagai true
+      supabase.from('profiles').select('id, nama, nim, unit, semester').eq('role', 'mahasiswa').neq('is_active', false).order('nama')
     ])
     setMasterJenis(resJenis.data ?? [])
     setMasterKegiatan(resKegiatan.data ?? [])
     setMahasiswaList(resMahasiswa.data ?? [])
   }
 
+  // PERBAIKAN: Join presensi untuk menghitung status kelengkapan absensi
   const fetchJadwals = async () => {
     setLoading(true)
     const { data } = await supabase
       .from('sesi')
-      .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis))')
+      .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis)), presensi(mahasiswa_id)')
       .order('tanggal', { ascending: false })
     
     setJadwals(data ?? [])
-    
-    if (data && data.length > 0) {
-      const sesiIds = data.map(d => d.id)
-      const { data: presensiAlpha } = await supabase
-        .from('presensi')
-        .select('sesi_id')
-        .eq('status', 'alpha')
-        .in('sesi_id', sesiIds)
-      
-      if (presensiAlpha) {
-        const uniqueIds = Array.from(new Set(presensiAlpha.map(p => p.sesi_id)))
-        setMarkedAlphaSesiIds(uniqueIds)
-      }
-    }
-    
     setLoading(false)
   }
 
@@ -136,11 +120,9 @@ export default function JadwalDanMasterPage() {
     } catch { return false }
   }
 
-  // FUNGSI BARU: Mencegat dan mengecek izin sebelum modal terbuka
   const handleOpenMarkAlpha = async (jadwal: any) => {
     setCheckingAlphaId(jadwal.id)
     try {
-      // Cek apakah di sesi ini ada perizinan yang masih berstatus 'pending'
       const { count, error } = await supabase
         .from('izin_sesi')
         .select('*', { count: 'exact', head: true })
@@ -152,13 +134,12 @@ export default function JadwalDanMasterPage() {
       if (count && count > 0) {
         toast({
           title: 'Aksi Tertahan ⚠️',
-          description: `Masih ada ${count} pengajuan izin yang PENDING. Silakan setujui atau tolak di menu Perizinan terlebih dahulu.`,
+          description: `Masih ada ${count} pengajuan izin yang PENDING. Silakan setujui/tolak di menu Perizinan terlebih dahulu.`,
           variant: 'destructive'
         })
-        return // Hentikan eksekusi, modal tidak akan terbuka
+        return 
       }
       
-      // Jika aman, buka modal
       setSelectedJadwalForAlpha(jadwal)
       setMarkAlpaDialogOpen(true)
     } catch (err: any) {
@@ -194,9 +175,8 @@ export default function JadwalDanMasterPage() {
       }
 
       setMarkAlpaDialogOpen(false)
-      
-      setMarkedAlphaSesiIds(prev => [...prev, selectedJadwalForAlpha.id])
       setSelectedJadwalForAlpha(null)
+      fetchJadwals() // Segarkan hitungan jumlah absen di UI
       
     } catch (error: any) {
       toast({ title: 'Aksi Ditolak', description: error.message, variant: 'destructive' })
@@ -377,10 +357,28 @@ export default function JadwalDanMasterPage() {
                 <div className="divide-y">
                   {jadwals.map(j => {
                     const finished = isJadwalFinished(j)
-                    const isMarkedAlpha = markedAlphaSesiIds.includes(j.id)
                     const namaKegiatan = j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui'
                     const jenisKegiatan = j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-'
                     const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
+
+                    // --- KALKULATOR KELENGKAPAN PRESENSI ---
+                    let targetMahasiswaIds = [];
+                    if (j.tipe_target === 'semua') {
+                        targetMahasiswaIds = mahasiswaList.map(m => m.id);
+                    } else if (j.tipe_target === 'unit') {
+                        targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit).map(m => m.id);
+                    } else if (j.tipe_target === 'unit_semester') {
+                        targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit && m.semester?.toString() === j.target_audiens?.semester?.toString()).map(m => m.id);
+                    } else if (j.tipe_target === 'custom') {
+                        targetMahasiswaIds = j.target_audiens?.mahasiswa_ids || [];
+                    }
+
+                    const targetCount = targetMahasiswaIds.length;
+                    const uniquePresensiIds = new Set((j.presensi || []).map((p: any) => p.mahasiswa_id));
+                    const currentCount = uniquePresensiIds.size;
+                    
+                    // Cek jika jumlah absen sudah sama dengan target peserta
+                    const isComplete = currentCount >= targetCount && targetCount > 0;
                     
                     return (
                       <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/30 transition-colors">
@@ -399,23 +397,28 @@ export default function JadwalDanMasterPage() {
                         </div>
                         
                         <div className="flex gap-2 shrink-0 items-center">
-                          {/* --- TOMBOL TANDAI ALPHA DIPERBARUI --- */}
+                          
+                          {/* --- TOMBOL TANDAI ALPHA HILANG JIKA LENGKAP --- */}
                           {finished && (
-                            <Button 
-                              variant={isMarkedAlpha ? "secondary" : "outline"}
-                              size="sm" 
-                              onClick={() => handleOpenMarkAlpha(j)}
-                              disabled={isMarkedAlpha || checkingAlphaId === j.id}
-                              className={isMarkedAlpha ? "bg-muted text-muted-foreground opacity-70" : "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"}
-                            >
-                              {checkingAlphaId === j.id ? (
-                                <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Mengecek...</>
-                              ) : isMarkedAlpha ? (
-                                <><CheckCircle2 className="h-4 w-4 mr-1.5" /> Sudah Ditandai</>
-                              ) : (
-                                <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha</>
-                              )}
-                            </Button>
+                            isComplete ? (
+                              <Badge variant="success" className="h-9 px-3 text-sm flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
+                                <CheckCircle2 className="h-4 w-4" /> Lengkap ({currentCount}/{targetCount})
+                              </Badge>
+                            ) : (
+                              <Button 
+                                variant="outline"
+                                size="sm" 
+                                onClick={() => handleOpenMarkAlpha(j)}
+                                disabled={checkingAlphaId === j.id}
+                                className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"
+                              >
+                                {checkingAlphaId === j.id ? (
+                                  <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Mengecek...</>
+                                ) : (
+                                  <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha ({currentCount}/{targetCount})</>
+                                )}
+                              </Button>
+                            )
                           )}
                           
                           <div className="h-8 w-px bg-border mx-1 hidden md:block"></div>
