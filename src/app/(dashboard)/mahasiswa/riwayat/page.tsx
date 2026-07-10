@@ -1,14 +1,3 @@
-Penyebab utama mengapa data riwayat Anda tampil 0 padahal di database sudah banyak adalah **kesalahan pada penamaan relasi tabel (Join) di kueri Supabase Anda**.
-
-Jika kita merujuk pada struktur halaman `MahasiswaDashboard` yang sudah Anda buat sebelumnya, tabel presensi itu berelasi dengan tabel **`sesi`**, bukan `jadwal_kegiatan`.
-
-Karena Anda mencoba menarik data dari `jadwal_kegiatan` (yang kemungkinan besar tidak ada di relasi tabel `presensi`), Supabase menggagalkan seluruh kueri tersebut secara diam-diam dan mengembalikan nilai `null`, sehingga aplikasi Anda membacanya sebagai array kosong `[]`.
-
-Selain itu, deklarasi `export const dynamic = 'force-dynamic'` di baris paling bawah **tidak boleh digunakan** di dalam file yang memiliki deklarasi `'use client'`. Hal itu akan menyebabkan *error* saat *build* di Vercel nanti.
-
-Silakan timpa seluruh kode di **`RiwayatPage`** Anda dengan versi yang sudah saya koreksi dan lengkapi dengan penangkap *error* ini:
-
-```tsx
 'use client'
 
 import { useEffect, useState } from 'react'
