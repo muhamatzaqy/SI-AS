@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     if (errSesi || !sesi) throw new Error('Sesi tidak ditemukan')
 
     // 2. Susun Query target audiens
-    let queryProfiles = supabase.from('profiles').select('id').eq('role', 'mahasiswa').eq('is_active', true)
+    let queryProfiles = supabase.from('profiles').select('id').eq('role', 'mahasiswa').neq('is_active', false)
 
     if (sesi.tipe_target === 'unit') {
       queryProfiles = queryProfiles.eq('unit', sesi.target_audiens.unit)
