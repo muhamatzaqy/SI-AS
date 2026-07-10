@@ -43,33 +43,27 @@ export default function JadwalDanMasterPage() {
   const supabase = createClient()
   const { toast } = useToast()
 
-  // --- STATE DATA ---
   const [jadwals, setJadwals] = useState<any[]>([])
   const [masterJenis, setMasterJenis] = useState<any[]>([])
   const [masterKegiatan, setMasterKegiatan] = useState<any[]>([])
   const [mahasiswaList, setMahasiswaList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   
-  // State baru untuk melacak sesi mana saja yang sudah di-Mark Alpha
   const [markedAlphaSesiIds, setMarkedAlphaSesiIds] = useState<string[]>([])
 
-  // --- STATE MODAL SESI ---
   const [dialogSesiOpen, setDialogSesiOpen] = useState(false)
   const [editingSesi, setEditingSesi] = useState<any | null>(null)
   const [submittingSesi, setSubmittingSesi] = useState(false)
   const [searchMahasiswa, setSearchMahasiswa] = useState('') 
 
-  // --- STATE MODAL MASTER ---
   const [dialogMasterOpen, setDialogMasterOpen] = useState(false)
   const [editingMaster, setEditingMaster] = useState<any | null>(null)
   const [submittingMaster, setSubmittingMaster] = useState(false)
 
-  // --- STATE MARK ALPHA ---
   const [markAlpaDialogOpen, setMarkAlpaDialogOpen] = useState(false)
   const [selectedJadwalForAlpha, setSelectedJadwalForAlpha] = useState<any | null>(null)
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
 
-  // --- FORMS ---
   const formSesi = useForm<SesiFormData>({ 
     resolver: zodResolver(sesiFormSchema), defaultValues: { tipe_target: 'semua', target_custom_ids: [] }
   })
@@ -82,7 +76,6 @@ export default function JadwalDanMasterPage() {
     resolver: zodResolver(masterFormSchema)
   })
 
-  // --- FETCHING DATA ---
   const fetchMasterData = async () => {
     const [resJenis, resKegiatan, resMahasiswa] = await Promise.all([
       supabase.from('jenis_kegiatan').select('*').order('nama_jenis'),
@@ -103,7 +96,6 @@ export default function JadwalDanMasterPage() {
     
     setJadwals(data ?? [])
     
-    // --- Lacak Sesi yang sudah di-Alpha ---
     if (data && data.length > 0) {
       const sesiIds = data.map(d => d.id)
       const { data: presensiAlpha } = await supabase
@@ -113,7 +105,6 @@ export default function JadwalDanMasterPage() {
         .in('sesi_id', sesiIds)
       
       if (presensiAlpha) {
-        // Ambil ID unik sesi yang memiliki setidaknya 1 status alpha
         const uniqueIds = Array.from(new Set(presensiAlpha.map(p => p.sesi_id)))
         setMarkedAlphaSesiIds(uniqueIds)
       }
@@ -127,7 +118,6 @@ export default function JadwalDanMasterPage() {
     fetchJadwals() 
   }, []) // eslint-disable-line
 
-  // --- LOGIKA SESI (JADWAL) ---
   const isJadwalFinished = (jadwal: any): boolean => {
     try {
       const now = new Date()
@@ -152,14 +142,34 @@ export default function JadwalDanMasterPage() {
         body: JSON.stringify({ jadwal_id: selectedJadwalForAlpha.id })
       })
       const data = await response.json()
+      
       if (!response.ok) throw new Error(data.error || 'Gagal menandai alpha')
-      toast({ title: 'Berhasil ✅', description: `${data.alphaCreated} mahasiswa ditandai ALPHA`, variant: 'success' })
+      
+      // PERBAIKAN: Menangani notifikasi jika tidak ada yang dialpha-kan (hadir/izin semua)
+      if (data.alphaCreated === 0) {
+        toast({ 
+          title: 'Sudah Lengkap ✨', 
+          description: data.message || 'Semua mahasiswa sudah memiliki status kehadiran (Hadir/Izin).',
+        })
+      } else {
+        toast({ 
+          title: 'Berhasil ✅', 
+          description: `${data.alphaCreated} mahasiswa ditandai ALPHA.`, 
+          variant: 'success' 
+        })
+      }
+
       setMarkAlpaDialogOpen(false)
+      
+      // PERBAIKAN: Langsung kunci tombol secara lokal tanpa perlu fetch ulang (menghindari blokir RLS)
+      setMarkedAlphaSesiIds(prev => [...prev, selectedJadwalForAlpha.id])
       setSelectedJadwalForAlpha(null)
-      fetchJadwals() // Memuat ulang data agar state markedAlphaSesiIds ter-update
+      
     } catch (error: any) {
       toast({ title: 'Aksi Ditolak', description: error.message, variant: 'destructive' })
-    } finally { setMarkAlpaLoading(false) }
+    } finally { 
+      setMarkAlpaLoading(false) 
+    }
   }
 
   const onSubmitSesi = async (data: SesiFormData) => {
@@ -250,7 +260,6 @@ export default function JadwalDanMasterPage() {
     setDialogSesiOpen(true)
   }
 
-  // --- LOGIKA MASTER KEGIATAN ---
   const onSubmitMaster = async (data: MasterFormData) => {
     setSubmittingMaster(true)
     try {
@@ -303,14 +312,12 @@ export default function JadwalDanMasterPage() {
     <div className="space-y-6">
       <PageHeader title="Manajemen Jadwal & Kegiatan" description="Kelola jadwal pelaksanaan dan master data kegiatan asrama" />
       
-      {/* --- SISTEM TABS --- */}
       <Tabs defaultValue="sesi" className="w-full space-y-6">
         <TabsList className="grid w-full grid-cols-2 lg:w-[400px]">
           <TabsTrigger value="sesi">Jadwal Sesi Aktif</TabsTrigger>
           <TabsTrigger value="master">Master Kegiatan</TabsTrigger>
         </TabsList>
 
-        {/* --- TAB 1: JADWAL SESI --- */}
         <TabsContent value="sesi" className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -359,7 +366,6 @@ export default function JadwalDanMasterPage() {
                         </div>
                         
                         <div className="flex gap-2 shrink-0 items-center">
-                          {/* --- TOMBOL MARK ALPHA --- */}
                           {finished && (
                             <Button 
                               variant={isMarkedAlpha ? "secondary" : "outline"}
@@ -390,12 +396,11 @@ export default function JadwalDanMasterPage() {
           </Card>
         </TabsContent>
 
-        {/* --- TAB 2: MASTER KEGIATAN --- */}
         <TabsContent value="master" className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold">Katalog Master Kegiatan</h3>
-              <p className="text-sm text-muted-foreground">Tambahkan nama kitab atau rutinan asrama di sini.</p>
+              <p className="text-sm text-muted-foreground">Tambahkan nama acara atau rutinan asrama di sini.</p>
             </div>
             <Button onClick={openCreateMaster} variant="secondary" className="border">
               <Plus className="mr-2 h-4 w-4" />Tambah Master Baru
@@ -408,7 +413,7 @@ export default function JadwalDanMasterPage() {
                 <thead className="bg-muted/50 text-muted-foreground border-b">
                   <tr>
                     <th className="px-4 py-3 font-medium w-16 text-center">No</th>
-                    <th className="px-4 py-3 font-medium">Nama Kegiatan / Kitab</th>
+                    <th className="px-4 py-3 font-medium">Nama Kegiatan</th>
                     <th className="px-4 py-3 font-medium w-48">Kategori</th>
                     <th className="px-4 py-3 font-medium text-right w-28">Aksi</th>
                   </tr>
@@ -436,7 +441,6 @@ export default function JadwalDanMasterPage() {
                         <div className="flex flex-col items-center justify-center">
                           <FolderOpen className="h-10 w-10 opacity-20 mb-3" />
                           <p>Belum ada master data kegiatan.</p>
-                          <p className="text-xs mt-1">Silakan tambah master baru terlebih dahulu.</p>
                         </div>
                       </td>
                     </tr>
@@ -448,7 +452,6 @@ export default function JadwalDanMasterPage() {
         </TabsContent>
       </Tabs>
 
-      {/* --- DIALOG MODAL SESI (JADWAL) --- */}
       <Dialog open={dialogSesiOpen} onOpenChange={setDialogSesiOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -458,7 +461,6 @@ export default function JadwalDanMasterPage() {
 
           <form onSubmit={formSesi.handleSubmit(onSubmitSesi)} className="space-y-4">
             
-            {/* Pemilihan Kegiatan */}
             <div className="grid grid-cols-2 gap-3 p-3 bg-muted/30 rounded-lg border">
               <div className="space-y-2">
                 <Label>Jenis Kegiatan</Label>
@@ -484,7 +486,6 @@ export default function JadwalDanMasterPage() {
               </div>
             </div>
 
-            {/* Target Audiens Dinamis */}
             <div className="space-y-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
               <div className="space-y-2">
                 <Label className="text-blue-900 font-semibold flex items-center"><Users className="h-4 w-4 mr-2"/> Tipe Target Peserta</Label>
@@ -503,7 +504,6 @@ export default function JadwalDanMasterPage() {
                 )}/>
               </div>
 
-              {/* Conditional Fields: Unit & Semester */}
               {(watchedTipeTarget === 'unit' || watchedTipeTarget === 'unit_semester') && (
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="space-y-2">
@@ -539,7 +539,6 @@ export default function JadwalDanMasterPage() {
                 </div>
               )}
 
-              {/* Conditional Fields: Custom (Daftar Checkbox + Search) */}
               {watchedTipeTarget === 'custom' && (
                 <div className="space-y-3 pt-2 border-t border-blue-100">
                   <div className="flex items-center justify-between">
@@ -549,7 +548,6 @@ export default function JadwalDanMasterPage() {
                     </span>
                   </div>
 
-                  {/* Input Search Mahasiswa */}
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input 
@@ -560,7 +558,6 @@ export default function JadwalDanMasterPage() {
                     />
                   </div>
 
-                  {/* Daftar Checkbox yang bisa di-filter */}
                   <div className="max-h-48 overflow-y-auto border bg-background rounded-md p-2 space-y-1">
                     {mahasiswaList.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-4">Tidak ada data mahasiswa aktif.</p>
@@ -593,7 +590,6 @@ export default function JadwalDanMasterPage() {
               )}
             </div>
 
-            {/* Waktu Pelaksanaan */}
             <div className="space-y-2">
               <Label>Tanggal</Label>
               <Input {...formSesi.register('tanggal')} type="date" className={formSesi.formState.errors.tanggal ? "border-red-500" : ""} />
@@ -618,7 +614,6 @@ export default function JadwalDanMasterPage() {
         </DialogContent>
       </Dialog>
 
-      {/* --- DIALOG MODAL MASTER KEGIATAN --- */}
       <Dialog open={dialogMasterOpen} onOpenChange={setDialogMasterOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -647,7 +642,6 @@ export default function JadwalDanMasterPage() {
         </DialogContent>
       </Dialog>
 
-      {/* --- DIALOG MARK ALPHA --- */}
       {markAlpaDialogOpen && selectedJadwalForAlpha && (
         <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
           <DialogContent className="max-w-md">
@@ -678,4 +672,3 @@ export default function JadwalDanMasterPage() {
     </div>
   )
 }
-export const dynamic = 'force-dynamic'
