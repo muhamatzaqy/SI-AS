@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton' // <--- Tambahkan baris ini
+import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { FileSpreadsheet, FileText, Loader2 } from 'lucide-react'
 import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage } from '@/lib/utils'
@@ -21,10 +21,14 @@ export default function LaporanPage() {
   const [filterUnit, setFilterUnit] = useState<string>('all')
   const [filterSemester, setFilterSemester] = useState<string>('all')
   
-  // State Filter Presensi
-  const [filterBulan, setFilterBulan] = useState<string>(() => {
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  // State Filter Presensi (Rentang Tanggal)
+  const [startDate, setStartDate] = useState<string>(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+  })
+  const [endDate, setEndDate] = useState<string>(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
   })
   const [filterJenis, setFilterJenis] = useState<string>('all')
   
@@ -49,7 +53,6 @@ export default function LaporanPage() {
       setMasterPeriode(resPeriode.data ?? [])
       setMasterJenisKegiatan(resJenis.data ?? [])
       
-      // Auto-select periode aktif jika ada
       const activePeriode = resPeriode.data?.find(p => p.is_active)
       if (activePeriode) setFilterPeriode(activePeriode.id)
     }
@@ -61,18 +64,8 @@ export default function LaporanPage() {
     if (filterUnit === 'lkim') setFilterSemester('all')
   }, [filterUnit])
 
-  const getMonthRange = (bulan: string) => {
-    const [year, month] = bulan.split('-').map(Number)
-    const start = new Date(year, month - 1, 1).toISOString().split('T')[0]
-    const end = new Date(year, month, 0).toISOString().split('T')[0]
-    return { start, end }
-  }
-
   // --- FETCH DATA PRESENSI ---
   const fetchPresensiData = useCallback(async () => {
-    const { start, end } = getMonthRange(filterBulan)
-
-    // Tarik semua data presensi di bulan tersebut beserta relasinya
     const { data: presensiData, error } = await supabase
       .from('presensi')
       .select(`
@@ -83,12 +76,11 @@ export default function LaporanPage() {
           nama_kegiatan (nama_kegiatan, jenis_kegiatan (id, nama_jenis))
         )
       `)
-      .gte('waktu_absen', `${start}T00:00:00`)
-      .lte('waktu_absen', `${end}T23:59:59`)
+      .gte('waktu_absen', `${startDate}T00:00:00`)
+      .lte('waktu_absen', `${endDate}T23:59:59`)
 
     if (error) return []
 
-    // Lakukan filter manual di Client-Side agar lebih aman dari error PostgREST
     const filtered = (presensiData ?? []).filter((p: any) => {
       const matchUnit = filterUnit === 'all' || p.profiles?.unit === filterUnit
       const matchSemester = filterSemester === 'all' || p.profiles?.semester?.toString() === filterSemester
@@ -97,7 +89,7 @@ export default function LaporanPage() {
     })
 
     return filtered.sort((a, b) => new Date(b.waktu_absen).getTime() - new Date(a.waktu_absen).getTime())
-  }, [filterBulan, filterUnit, filterSemester, filterJenis, supabase])
+  }, [startDate, endDate, filterUnit, filterSemester, filterJenis, supabase])
 
   // --- FETCH DATA KEUANGAN ---
   const fetchKeuanganData = useCallback(async () => {
@@ -109,7 +101,6 @@ export default function LaporanPage() {
         master_tarif (nominal, periode_id, master_periode(nama_periode))
       `)
 
-    // Filter by Periode Pembayaran
     if (filterPeriode !== 'all') {
       query = query.eq('master_tarif.periode_id', filterPeriode)
     }
@@ -117,11 +108,8 @@ export default function LaporanPage() {
     const { data: tagihanData, error } = await query
     if (error) return []
 
-    // Filter Unit & Semester
     const filtered = (tagihanData ?? []).filter((t: any) => {
-      // Pastikan data master_tarif tidak null (akibat inner join filter)
       if (filterPeriode !== 'all' && t.master_tarif === null) return false
-      
       const matchUnit = filterUnit === 'all' || t.profiles?.unit === filterUnit
       const matchSemester = filterSemester === 'all' || t.profiles?.semester?.toString() === filterSemester
       return matchUnit && matchSemester
@@ -148,7 +136,7 @@ export default function LaporanPage() {
 
   useEffect(() => { loadPreview() }, [loadPreview])
 
-  // Builder Rekap Presensi (Hitung persentase per anak)
+  // Builder Rekap Presensi
   const buildAttendanceSummary = (data: any[]) => {
     const summary: Record<string, any> = {}
     data.forEach((p: any) => {
@@ -195,6 +183,7 @@ export default function LaporanPage() {
         // Sheet 2: Rekap Persentase
         const summary = buildAttendanceSummary(data)
         const rowsRekap = summary.map(m => {
+          const totalJadwal = m.hadir + m.izin + m.alpha
           const pct = calcAttendancePercentage(m.hadir, m.izin, m.alpha)
           return {
             Nama: m.nama,
@@ -204,7 +193,7 @@ export default function LaporanPage() {
             Hadir: m.hadir,
             Izin: m.izin,
             Alpha: m.alpha,
-            Total_Sesi: m.hadir + m.izin + m.alpha,
+            'Total Jadwal': totalJadwal,
             'Persentase (%)': pct.toFixed(1)
           }
         })
@@ -242,28 +231,38 @@ export default function LaporanPage() {
       doc.setFontSize(16)
       doc.text(`Laporan ${exportType === 'presensi' ? 'Kehadiran Asrama' : 'Pembayaran SPP'}`, 14, 20)
       doc.setFontSize(10)
-      doc.text(`Unit: ${filterUnit === 'all' ? 'Semua Unit' : formatLabel(filterUnit)}`, 14, 28)
-      doc.text(`Dicetak: ${formatDate(new Date())}`, 14, 34)
+      
+      if (exportType === 'presensi') {
+        doc.text(`Periode: ${formatDate(startDate)} s/d ${formatDate(endDate)}`, 14, 28)
+        doc.text(`Unit: ${filterUnit === 'all' ? 'Semua Unit' : formatLabel(filterUnit)}`, 14, 34)
+      } else {
+        doc.text(`Unit: ${filterUnit === 'all' ? 'Semua Unit' : formatLabel(filterUnit)}`, 14, 28)
+        doc.text(`Dicetak: ${formatDate(new Date())}`, 14, 34)
+      }
 
       if (exportType === 'presensi') {
         const data = await fetchPresensiData()
         const summary = buildAttendanceSummary(data)
         
-        const bodyRows = summary.map(m => [
-          m.nama, 
-          formatLabel(m.unit), 
-          m.semester.toString(), 
-          m.hadir.toString(), 
-          m.izin.toString(), 
-          m.alpha.toString(), 
-          `${calcAttendancePercentage(m.hadir, m.izin, m.alpha).toFixed(1)}%`
-        ])
+        const bodyRows = summary.map(m => {
+          const totalJadwal = m.hadir + m.izin + m.alpha
+          return [
+            m.nama, 
+            formatLabel(m.unit), 
+            m.semester.toString(), 
+            m.hadir.toString(), 
+            m.izin.toString(), 
+            m.alpha.toString(),
+            totalJadwal.toString(),
+            `${calcAttendancePercentage(m.hadir, m.izin, m.alpha).toFixed(1)}%`
+          ]
+        })
 
         autoTable(doc, {
           startY: 40,
-          head: [['Nama', 'Unit', 'Smt', 'Hadir', 'Izin', 'Alpha', 'Persentase']],
+          head: [['Nama', 'Unit', 'Smt', 'Hadir', 'Izin', 'Alpha', 'Jml Jadwal', 'Persentase']],
           body: bodyRows,
-          headStyles: { fillColor: [34, 139, 34] },
+          headStyles: { fillColor: [34, 139, 34] }, // Warna hijau SANGAR
         })
       } else {
         const data = await fetchKeuanganData()
@@ -298,9 +297,8 @@ export default function LaporanPage() {
       <Card>
         <CardHeader><CardTitle>Pengaturan Laporan</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             
-            {/* Filter Jenis Laporan */}
             <div className="space-y-2">
               <Label>Jenis Laporan</Label>
               <Select value={exportType} onValueChange={v => setExportType(v as 'presensi' | 'keuangan')}>
@@ -312,14 +310,19 @@ export default function LaporanPage() {
               </Select>
             </div>
 
-            {/* Filter Waktu Dinamis (Bulan vs Periode) */}
             {exportType === 'presensi' ? (
-              <div className="space-y-2">
-                <Label>Bulan</Label>
-                <Input type="month" value={filterBulan} onChange={e => setFilterBulan(e.target.value)} />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label>Dari Tanggal</Label>
+                  <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Sampai Tanggal</Label>
+                  <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+                </div>
+              </>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 xl:col-span-2">
                 <Label>Periode SPP</Label>
                 <Select value={filterPeriode} onValueChange={setFilterPeriode}>
                   <SelectTrigger><SelectValue placeholder="Pilih Periode" /></SelectTrigger>
@@ -333,7 +336,6 @@ export default function LaporanPage() {
               </div>
             )}
 
-            {/* Filter Unit */}
             <div className="space-y-2">
               <Label>Unit Asrama</Label>
               <Select value={filterUnit} onValueChange={setFilterUnit}>
@@ -346,7 +348,6 @@ export default function LaporanPage() {
               </Select>
             </div>
 
-            {/* Filter Semester (Otomatis mati jika LKIM) */}
             <div className="space-y-2">
               <Label>Semester</Label>
               <Select value={filterSemester} onValueChange={setFilterSemester} disabled={filterUnit === 'lkim'}>
@@ -363,7 +364,6 @@ export default function LaporanPage() {
               </Select>
             </div>
 
-            {/* Filter Jenis Kegiatan (Hanya muncul jika Presensi) */}
             {exportType === 'presensi' && (
               <div className="space-y-2">
                 <Label>Kategori Kegiatan</Label>
@@ -441,4 +441,3 @@ export default function LaporanPage() {
     </div>
   )
 }
-export const dynamic = 'force-dynamic'
