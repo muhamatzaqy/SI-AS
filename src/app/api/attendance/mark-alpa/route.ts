@@ -88,7 +88,8 @@ export async function POST(req: Request) {
     const izinPulangIds = (izinPulangApproved || []).map((i: any) => i.mahasiswa_id)
 
     // Gabungkan semua ID mahasiswa yang punya izin sah di hari ini
-    const allApprovedIzinIds = [...new Set([...izinSesiIds, ...izinPulangIds])]
+    // MENJADI SEPERTI INI:
+    const allApprovedIzinIds = Array.from(new Set([...izinSesiIds, ...izinPulangIds]))
 
     // 5. Cari mahasiswa yang belum ada di tabel presensi
     const belumAbsen = targetMahasiswa.filter(m => !sudahAbsenIds.includes(m.id))
