@@ -64,74 +64,112 @@ export default function LaporanPage() {
     if (filterUnit === 'lkim') setFilterSemester('all')
   }, [filterUnit])
 
-  // --- FETCH DATA PRESENSI (DIPERBARUI) ---
+  // --- FETCH DATA PRESENSI (DENGAN AUTO PAGINATION LOOP) ---
   const fetchPresensiData = useCallback(async () => {
-    // Menggunakan !inner join agar filter bisa langsung dilakukan di tingkat Database
-    let query = supabase
-      .from('presensi')
-      .select(`
-        *,
-        profiles!inner (nama, nim, unit, semester),
-        sesi!inner (
-          tanggal,
-          nama_kegiatan!inner (
-            id, 
-            nama_kegiatan, 
-            jenis_id,
-            jenis_kegiatan (id, nama_jenis)
+    let allPresensi: any[] = []
+    let from = 0
+    const pageSize = 1000 // Batas aman Supabase
+    let hasMore = true
+
+    while (hasMore) {
+      let query = supabase
+        .from('presensi')
+        .select(`
+          *,
+          profiles!inner (nama, nim, unit, semester),
+          sesi!inner (
+            tanggal,
+            nama_kegiatan!inner (
+              id, 
+              nama_kegiatan, 
+              jenis_id,
+              jenis_kegiatan (id, nama_jenis)
+            )
           )
-        )
-      `)
-      .gte('sesi.tanggal', startDate)
-      .lte('sesi.tanggal', endDate)
-      .limit(15000); // Mencegah batas potongan 1000 baris dari Supabase
+        `)
+        .gte('sesi.tanggal', startDate)
+        .lte('sesi.tanggal', endDate)
+        .range(from, from + pageSize - 1)
 
-    // Filter Dinamis langsung ke Database
-    if (filterUnit !== 'all') {
-      query = query.eq('profiles.unit', filterUnit)
-    }
-    if (filterSemester !== 'all') {
-      query = query.eq('profiles.semester', filterSemester)
-    }
-    if (filterJenis !== 'all') {
-      query = query.eq('sesi.nama_kegiatan.jenis_id', filterJenis)
+      // Filter Dinamis langsung ke Database
+      if (filterUnit !== 'all') {
+        query = query.eq('profiles.unit', filterUnit)
+      }
+      if (filterSemester !== 'all') {
+        query = query.eq('profiles.semester', filterSemester)
+      }
+      if (filterJenis !== 'all') {
+        query = query.eq('sesi.nama_kegiatan.jenis_id', filterJenis)
+      }
+
+      const { data, error } = await query
+      if (error) {
+        console.error("Error fetching presensi batch:", error)
+        break
+      }
+
+      if (data && data.length > 0) {
+        allPresensi = [...allPresensi, ...data]
+        from += pageSize
+        
+        // Jika data yang didapat kurang dari limit, berarti sudah habis
+        if (data.length < pageSize) {
+          hasMore = false
+        }
+      } else {
+        hasMore = false
+      }
     }
 
-    const { data: presensiData, error } = await query
-    if (error) {
-      console.error(error)
-      return []
-    }
-
-    // Mengurutkan berdasarkan tanggal sesi (terbaru di atas)
-    return (presensiData ?? []).sort((a, b) => new Date(b.sesi.tanggal).getTime() - new Date(a.sesi.tanggal).getTime())
+    return allPresensi.sort((a, b) => new Date(b.sesi.tanggal).getTime() - new Date(a.sesi.tanggal).getTime())
   }, [startDate, endDate, filterUnit, filterSemester, filterJenis, supabase])
 
-  // --- FETCH DATA KEUANGAN (DIPERBARUI) ---
+  // --- FETCH DATA KEUANGAN (DENGAN AUTO PAGINATION LOOP) ---
   const fetchKeuanganData = useCallback(async () => {
-    let query = supabase
-      .from('tagihan_spp')
-      .select(`
-        *,
-        profiles!inner (nama, nim, unit, semester),
-        master_tarif!inner (nominal, periode_id, master_periode(nama_periode))
-      `)
-      .limit(10000);
+    let allKeuangan: any[] = []
+    let from = 0
+    const pageSize = 1000
+    let hasMore = true
 
-    if (filterPeriode !== 'all') {
-      query = query.eq('master_tarif.periode_id', filterPeriode)
-    }
-    if (filterUnit !== 'all') {
-      query = query.eq('profiles.unit', filterUnit)
-    }
-    if (filterSemester !== 'all') {
-      query = query.eq('profiles.semester', filterSemester)
+    while (hasMore) {
+      let query = supabase
+        .from('tagihan_spp')
+        .select(`
+          *,
+          profiles!inner (nama, nim, unit, semester),
+          master_tarif!inner (nominal, periode_id, master_periode(nama_periode))
+        `)
+        .range(from, from + pageSize - 1)
+
+      if (filterPeriode !== 'all') {
+        query = query.eq('master_tarif.periode_id', filterPeriode)
+      }
+      if (filterUnit !== 'all') {
+        query = query.eq('profiles.unit', filterUnit)
+      }
+      if (filterSemester !== 'all') {
+        query = query.eq('profiles.semester', filterSemester)
+      }
+
+      const { data, error } = await query
+      if (error) {
+        console.error("Error fetching keuangan batch:", error)
+        break
+      }
+
+      if (data && data.length > 0) {
+        allKeuangan = [...allKeuangan, ...data]
+        from += pageSize
+        
+        if (data.length < pageSize) {
+          hasMore = false
+        }
+      } else {
+        hasMore = false
+      }
     }
 
-    const { data: tagihanData, error } = await query
-    if (error) return []
-
-    return (tagihanData ?? []).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    return allKeuangan.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [filterPeriode, filterUnit, filterSemester, supabase])
 
   // Load Preview UI
