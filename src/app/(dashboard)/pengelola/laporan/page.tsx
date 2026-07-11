@@ -64,58 +64,74 @@ export default function LaporanPage() {
     if (filterUnit === 'lkim') setFilterSemester('all')
   }, [filterUnit])
 
-  // --- FETCH DATA PRESENSI ---
+  // --- FETCH DATA PRESENSI (DIPERBARUI) ---
   const fetchPresensiData = useCallback(async () => {
-    const { data: presensiData, error } = await supabase
+    // Menggunakan !inner join agar filter bisa langsung dilakukan di tingkat Database
+    let query = supabase
       .from('presensi')
       .select(`
         *,
-        profiles (nama, nim, unit, semester),
-        sesi (
+        profiles!inner (nama, nim, unit, semester),
+        sesi!inner (
           tanggal,
-          nama_kegiatan (nama_kegiatan, jenis_kegiatan (id, nama_jenis))
+          nama_kegiatan!inner (
+            id, 
+            nama_kegiatan, 
+            jenis_id,
+            jenis_kegiatan (id, nama_jenis)
+          )
         )
       `)
-      .gte('waktu_absen', `${startDate}T00:00:00`)
-      .lte('waktu_absen', `${endDate}T23:59:59`)
+      .gte('sesi.tanggal', startDate)
+      .lte('sesi.tanggal', endDate)
+      .limit(15000); // Mencegah batas potongan 1000 baris dari Supabase
 
-    if (error) return []
+    // Filter Dinamis langsung ke Database
+    if (filterUnit !== 'all') {
+      query = query.eq('profiles.unit', filterUnit)
+    }
+    if (filterSemester !== 'all') {
+      query = query.eq('profiles.semester', filterSemester)
+    }
+    if (filterJenis !== 'all') {
+      query = query.eq('sesi.nama_kegiatan.jenis_id', filterJenis)
+    }
 
-    const filtered = (presensiData ?? []).filter((p: any) => {
-      const matchUnit = filterUnit === 'all' || p.profiles?.unit === filterUnit
-      const matchSemester = filterSemester === 'all' || p.profiles?.semester?.toString() === filterSemester
-      const matchJenis = filterJenis === 'all' || p.sesi?.nama_kegiatan?.jenis_kegiatan?.id === filterJenis
-      return matchUnit && matchSemester && matchJenis
-    })
+    const { data: presensiData, error } = await query
+    if (error) {
+      console.error(error)
+      return []
+    }
 
-    return filtered.sort((a, b) => new Date(b.waktu_absen).getTime() - new Date(a.waktu_absen).getTime())
+    // Mengurutkan berdasarkan tanggal sesi (terbaru di atas)
+    return (presensiData ?? []).sort((a, b) => new Date(b.sesi.tanggal).getTime() - new Date(a.sesi.tanggal).getTime())
   }, [startDate, endDate, filterUnit, filterSemester, filterJenis, supabase])
 
-  // --- FETCH DATA KEUANGAN ---
+  // --- FETCH DATA KEUANGAN (DIPERBARUI) ---
   const fetchKeuanganData = useCallback(async () => {
     let query = supabase
       .from('tagihan_spp')
       .select(`
         *,
-        profiles (nama, nim, unit, semester),
-        master_tarif (nominal, periode_id, master_periode(nama_periode))
+        profiles!inner (nama, nim, unit, semester),
+        master_tarif!inner (nominal, periode_id, master_periode(nama_periode))
       `)
+      .limit(10000);
 
     if (filterPeriode !== 'all') {
       query = query.eq('master_tarif.periode_id', filterPeriode)
+    }
+    if (filterUnit !== 'all') {
+      query = query.eq('profiles.unit', filterUnit)
+    }
+    if (filterSemester !== 'all') {
+      query = query.eq('profiles.semester', filterSemester)
     }
 
     const { data: tagihanData, error } = await query
     if (error) return []
 
-    const filtered = (tagihanData ?? []).filter((t: any) => {
-      if (filterPeriode !== 'all' && t.master_tarif === null) return false
-      const matchUnit = filterUnit === 'all' || t.profiles?.unit === filterUnit
-      const matchSemester = filterSemester === 'all' || t.profiles?.semester?.toString() === filterSemester
-      return matchUnit && matchSemester
-    })
-
-    return filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    return (tagihanData ?? []).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [filterPeriode, filterUnit, filterSemester, supabase])
 
   // Load Preview UI
