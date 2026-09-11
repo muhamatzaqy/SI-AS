@@ -24,6 +24,8 @@ const profileSchema = z.object({
   semester: z.string().optional().or(z.literal('')), 
 })
 
+type ProfileFormData = z.infer<typeof profileSchema>
+
 export default function EditProfilPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -31,7 +33,7 @@ export default function EditProfilPage() {
   const [isCompleted, setIsCompleted] = useState(false)
   
   const supabase = createClient()
-  const form = useForm({ 
+  const form = useForm<ProfileFormData>({ 
     resolver: zodResolver(profileSchema),
     defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '', unit: undefined }
   })
@@ -61,7 +63,7 @@ export default function EditProfilPage() {
           form.reset({
             nama: data.nama || '',
             nim: data.nim || '',
-            unit: (data.unit as 'mahad_aly' | 'lkim') || undefined,
+            unit: (data.unit === 'mahad_aly' || data.unit === 'lkim') ? data.unit : undefined,
             angkatan: data.angkatan || new Date().getFullYear(),
             semester: data.semester ? data.semester.toString() : ''
           })
@@ -75,7 +77,7 @@ export default function EditProfilPage() {
     loadProfile()
   }, [supabase, form, router])
 
-  const onSubmit = async (data: z.infer<typeof profileSchema>) => {
+  const onSubmit = async (data: ProfileFormData) => {
     setSubmitting(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -87,7 +89,7 @@ export default function EditProfilPage() {
         unit: data.unit,
         angkatan: data.angkatan,
         semester: data.semester ? parseInt(data.semester) : null,
-        is_completed: true // Menandakan form profil sudah diisi
+        is_completed: true 
       }
       
       const { error } = await supabase.from('profiles').update(payload).eq('id', user.id)
@@ -95,7 +97,6 @@ export default function EditProfilPage() {
 
       toast.success('Profil berhasil disimpan!')
       
-      // Jika profil baru saja dilengkapi, tendang langsung ke dashboard
       if (!isCompleted) {
           router.push('/mahasiswa')
       }
@@ -128,13 +129,13 @@ export default function EditProfilPage() {
             <div className="space-y-2">
               <Label>Nama Lengkap</Label>
               <Input {...form.register('nama')} className={errors.nama ? "border-red-500" : ""} />
-              {errors.nama && <p className="text-xs text-red-500">{errors.nama.message as string}</p>}
+              {errors.nama && <p className="text-xs text-red-500">{errors.nama.message}</p>}
             </div>
             
             <div className="space-y-2">
               <Label>NIM / Nomor Induk</Label>
               <Input {...form.register('nim')} className={errors.nim ? "border-red-500" : ""} />
-              {errors.nim && <p className="text-xs text-red-500">{errors.nim.message as string}</p>}
+              {errors.nim && <p className="text-xs text-red-500">{errors.nim.message}</p>}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -154,17 +155,16 @@ export default function EditProfilPage() {
                     </Select>
                   )}
                 />
-                {errors.unit && <p className="text-xs text-red-500">{errors.unit.message as string}</p>}
+                {errors.unit && <p className="text-xs text-red-500">{errors.unit.message}</p>}
               </div>
 
               <div className="space-y-2">
                 <Label>Tahun Angkatan</Label>
                 <Input type="number" {...form.register('angkatan')} className={errors.angkatan ? "border-red-500" : ""} />
-                {errors.angkatan && <p className="text-xs text-red-500">{errors.angkatan.message as string}</p>}
+                {errors.angkatan && <p className="text-xs text-red-500">{errors.angkatan.message}</p>}
               </div>
             </div>
             
-            {/* Hanya tampil jika milih Ma'had Aly */}
             {currentUnit === 'mahad_aly' && (
               <div className="space-y-2 w-1/2">
                 <Label>Semester</Label>
