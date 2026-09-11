@@ -26,7 +26,7 @@ export default async function MahasiswaDashboard() {
   // 2. Cek Role, pastikan dia mahasiswa
   if (profile?.role !== 'mahasiswa') redirect(`/${profile?.role ?? 'login'}`)
 
-  // 3. BARU CEK PROFIL LENGKAP ATAU BELUM (Di sini tempat yang benar, tidak akan error)
+  // 3. BARU CEK PROFIL LENGKAP ATAU BELUM
   if (!profile?.is_completed) redirect('/mahasiswa/profil')
 
   const today = new Date().toISOString().split('T')[0]
@@ -106,12 +106,14 @@ export default async function MahasiswaDashboard() {
             <User className="h-4 w-4" /> Profil
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem asChild className="cursor-pointer">
+            {/* Hapus properti asChild di sini */}
+            <DropdownMenuItem className="cursor-pointer">
               <Link href="/mahasiswa/profil" className="flex w-full items-center">
                 <Settings className="mr-2 h-4 w-4" /> Edit Profil
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem asChild className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
+            {/* Hapus properti asChild di sini juga */}
+            <DropdownMenuItem className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
               <form action={handleLogout} className="w-full">
                 <button type="submit" className="flex w-full items-center text-left">
                   <LogOut className="mr-2 h-4 w-4" /> Keluar
