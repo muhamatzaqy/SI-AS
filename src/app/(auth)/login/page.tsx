@@ -18,16 +18,34 @@ export default function LoginPage() {
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginFormData>({ resolver: zodResolver(loginSchema) })
 
   const onSubmit = async (data: LoginFormData) => {
-    setError(null)
-    const { error: authError } = await supabase.auth.signInWithPassword({ email: data.email, password: data.password })
-    if (authError) { setError('Email atau password salah.'); return }
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const { data: profileData } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-      const role = (profileData as { role: string } | null)?.role
-      router.push(role ? `/${role}` : '/mahasiswa')
+      setError(null)
+      const { error: authError } = await supabase.auth.signInWithPassword({ email: data.email, password: data.password })
+      
+      if (authError) { 
+        setError('Email belum diverifikasi atau password salah.'); 
+        return 
+      }
+      
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        // Ambil role dan is_completed
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('role, is_completed')
+          .eq('id', user.id)
+          .single()
+        
+        const role = profileData?.role || 'mahasiswa'
+        const isCompleted = profileData?.is_completed
+  
+        // LOGIKA PENTING: Arahkan ke isi profil jika belum lengkap
+        if (role === 'mahasiswa' && !isCompleted) {
+          router.push('/mahasiswa/profil')
+        } else {
+          router.push(`/${role}`)
+        }
+      }
     }
-  }
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden islamic-gradient p-4">
