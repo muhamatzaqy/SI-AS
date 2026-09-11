@@ -17,10 +17,17 @@ import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage, getA
 export default async function MahasiswaDashboard() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
+  
   if (!user) redirect('/login')
   
+  // 1. Ambil data profil DULU
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+  
+  // 2. Cek Role, pastikan dia mahasiswa
   if (profile?.role !== 'mahasiswa') redirect(`/${profile?.role ?? 'login'}`)
+
+  // 3. BARU CEK PROFIL LENGKAP ATAU BELUM (Di sini tempat yang benar, tidak akan error)
+  if (!profile?.is_completed) redirect('/mahasiswa/profil')
 
   const today = new Date().toISOString().split('T')[0]
   
@@ -41,12 +48,12 @@ export default async function MahasiswaDashboard() {
       .select('*, master_tarif(nominal, master_periode(nama_periode))')
       .eq('mahasiswa_id', user.id)
       .order('created_at', { ascending: false })
-      .limit(1), // Ambil tagihan terbaru
+      .limit(1),
     supabase.from('pelanggaran').select('poin').eq('mahasiswa_id', user.id),
     supabase.from('presensi').select('status, sesi(nama_kegiatan(nama_kegiatan))').eq('mahasiswa_id', user.id),
   ])
 
-  // Filter sesi berdasarkan unit & semester (Eksekusi logic tipe_target JSONB)
+  // Filter sesi
   const jadwalHariIni = (sesiHariIniData ?? []).filter((s: any) => {
     if (s.tipe_target === 'semua') return true
     if (s.tipe_target === 'unit' && s.target_audiens?.unit === profile?.unit) return true
@@ -56,17 +63,17 @@ export default async function MahasiswaDashboard() {
     return false
   })
 
-  const sppData = sppDataList?.[0] // Data SPP terkini
+  const sppData = sppDataList?.[0]
   const totalPoin = (pelanggaran ?? []).reduce((sum: number, p: any) => sum + p.poin, 0)
 
-  // Kalkulasi persentase kehadiran keseluruhan
+  // Kalkulasi persentase
   const presensiList = presensiData ?? []
   const totalHadir = presensiList.filter((p: any) => p.status === 'hadir').length
   const totalIzin = presensiList.filter((p: any) => p.status === 'izin').length
   const totalAlpha = presensiList.filter((p: any) => p.status === 'alpha').length
   const overallPercentage = calcAttendancePercentage(totalHadir, totalIzin, totalAlpha)
 
-  // Breakdown kehadiran per nama kegiatan
+  // Breakdown kehadiran
   const activityMap: Record<string, { nama: string; hadir: number; izin: number; alpha: number }> = {}
   presensiList.forEach((p: any) => {
     const nama = p.sesi?.nama_kegiatan?.nama_kegiatan ?? 'Kegiatan Lainnya'
@@ -78,18 +85,16 @@ export default async function MahasiswaDashboard() {
   })
   const activityBreakdown = Object.values(activityMap)
 
-  // --- SERVER ACTION UNTUK LOGOUT ---
+  // SERVER ACTION UNTUK LOGOUT
   const handleLogout = async () => {
     'use server'
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    const supabaseClient = createClient()
+    await supabaseClient.auth.signOut()
     redirect('/login')
   }
 
   return (
     <div className="space-y-6">
-      
-      {/* HEADER DENGAN MENU PROFIL DROPDOWN */}
       <div className="flex justify-between items-start">
         <PageHeader 
           title={`Halo, ${profile?.nama?.split(' ')[0] ?? 'Mahasiswa'}!`} 
@@ -97,17 +102,16 @@ export default async function MahasiswaDashboard() {
         />
         
         <DropdownMenu>
-          {/* Hapus asChild dan gunakan styling tombol bawaan Tailwind */}
           <DropdownMenuTrigger className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-input bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring gap-2 mt-1">
             <User className="h-4 w-4" /> Profil
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem className="cursor-pointer">
+            <DropdownMenuItem asChild className="cursor-pointer">
               <Link href="/mahasiswa/profil" className="flex w-full items-center">
                 <Settings className="mr-2 h-4 w-4" /> Edit Profil
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
+            <DropdownMenuItem asChild className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
               <form action={handleLogout} className="w-full">
                 <button type="submit" className="flex w-full items-center text-left">
                   <LogOut className="mr-2 h-4 w-4" /> Keluar
@@ -119,32 +123,12 @@ export default async function MahasiswaDashboard() {
       </div>
       
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
-        <StatCard 
-          title="Sesi Hari Ini" 
-          value={jadwalHariIni.length} 
-          icon={Calendar} 
-        />
-        <StatCard 
-          title="Status SPP" 
-          value={sppData ? formatLabel(sppData.status) : 'Belum Ada'} 
-          icon={CreditCard} 
-          iconClassName="bg-blue-100 [&_svg]:text-blue-600" 
-        />
-        <StatCard 
-          title="Poin Pelanggaran" 
-          value={totalPoin} 
-          icon={AlertTriangle} 
-          iconClassName={totalPoin > 0 ? 'bg-red-100 [&_svg]:text-red-600' : 'bg-green-100 [&_svg]:text-green-600'} 
-        />
-        <StatCard 
-          title="Persentase Hadir" 
-          value={`${overallPercentage.toFixed(1)}%`} 
-          icon={BarChart3} 
-          iconClassName={overallPercentage >= 75 ? 'bg-green-100 [&_svg]:text-green-600' : overallPercentage >= 65 ? 'bg-yellow-100 [&_svg]:text-yellow-600' : 'bg-red-100 [&_svg]:text-red-600'} 
-        />
+        <StatCard title="Sesi Hari Ini" value={jadwalHariIni.length} icon={Calendar} />
+        <StatCard title="Status SPP" value={sppData ? formatLabel(sppData.status) : 'Belum Ada'} icon={CreditCard} iconClassName="bg-blue-100 [&_svg]:text-blue-600" />
+        <StatCard title="Poin Pelanggaran" value={totalPoin} icon={AlertTriangle} iconClassName={totalPoin > 0 ? 'bg-red-100 [&_svg]:text-red-600' : 'bg-green-100 [&_svg]:text-green-600'} />
+        <StatCard title="Persentase Hadir" value={`${overallPercentage.toFixed(1)}%`} icon={BarChart3} iconClassName={overallPercentage >= 75 ? 'bg-green-100 [&_svg]:text-green-600' : overallPercentage >= 65 ? 'bg-yellow-100 [&_svg]:text-yellow-600' : 'bg-red-100 [&_svg]:text-red-600'} />
       </div>
 
-      {/* Breakdown Kehadiran per Kegiatan */}
       {activityBreakdown.length > 0 && (
         <Card>
           <CardHeader><CardTitle className="text-base">Rekap Kehadiran per Kegiatan</CardTitle></CardHeader>
@@ -173,7 +157,6 @@ export default async function MahasiswaDashboard() {
         </Card>
       )}
 
-      {/* Jadwal Sesi Hari Ini */}
       {jadwalHariIni.length > 0 && (
         <Card>
           <CardHeader><CardTitle>Jadwal Sesi Hari Ini</CardTitle></CardHeader>
@@ -200,7 +183,6 @@ export default async function MahasiswaDashboard() {
         </Card>
       )}
 
-      {/* Informasi SPP */}
       {sppData && (
         <Card>
           <CardHeader><CardTitle>Tagihan SPP Terkini</CardTitle></CardHeader>
@@ -222,5 +204,4 @@ export default async function MahasiswaDashboard() {
     </div>
   )
 }
-
 export const dynamic = 'force-dynamic'
