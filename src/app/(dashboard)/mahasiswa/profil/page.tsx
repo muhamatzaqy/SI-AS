@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
-import { UNIT_OPTIONS } from '@/lib/constants' // Pastikan ini ada
+import { UNIT_OPTIONS } from '@/lib/constants'
 
 const profileSchema = z.object({
   nama: z.string().min(3, "Nama minimal harus 3 karakter"),
@@ -35,14 +35,18 @@ export default function EditProfilPage() {
     resolver: zodResolver(profileSchema),
     defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '', unit: undefined }
   })
-  const { errors, watch } = form.formState
+  
+  const { errors } = form.formState
   const currentUnit = form.watch('unit')
 
   useEffect(() => {
     async function loadProfile() {
       try {
         const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+        if (!user) {
+            router.push('/login')
+            return
+        }
 
         const { data, error } = await supabase
           .from('profiles')
@@ -57,7 +61,7 @@ export default function EditProfilPage() {
           form.reset({
             nama: data.nama || '',
             nim: data.nim || '',
-            unit: data.unit || undefined,
+            unit: (data.unit as 'mahad_aly' | 'lkim') || undefined,
             angkatan: data.angkatan || new Date().getFullYear(),
             semester: data.semester ? data.semester.toString() : ''
           })
@@ -69,9 +73,9 @@ export default function EditProfilPage() {
       }
     }
     loadProfile()
-  }, [supabase, form])
+  }, [supabase, form, router])
 
-  const onSubmit = async (data: any) => {
+  const onSubmit = async (data: z.infer<typeof profileSchema>) => {
     setSubmitting(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -83,15 +87,18 @@ export default function EditProfilPage() {
         unit: data.unit,
         angkatan: data.angkatan,
         semester: data.semester ? parseInt(data.semester) : null,
-        is_completed: true // Tandai sudah lengkap!
+        is_completed: true // Menandakan form profil sudah diisi
       }
       
       const { error } = await supabase.from('profiles').update(payload).eq('id', user.id)
       if (error) throw error
 
       toast.success('Profil berhasil disimpan!')
-      // Redirect ke dashboard jika ini pengisian pertama
-      router.push('/mahasiswa')
+      
+      // Jika profil baru saja dilengkapi, tendang langsung ke dashboard
+      if (!isCompleted) {
+          router.push('/mahasiswa')
+      }
       
     } catch (err: any) {
       toast.error(`Gagal Menyimpan: ${err.message}`)
@@ -104,7 +111,10 @@ export default function EditProfilPage() {
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
-      <PageHeader title={!isCompleted ? "Lengkapi Profil Anda" : "Edit Profil"} description={!isCompleted ? "Silakan lengkapi data diri Anda sebelum masuk ke sistem." : "Perbarui informasi diri Anda"} />
+      <PageHeader 
+        title={!isCompleted ? "Lengkapi Profil Anda" : "Edit Profil"} 
+        description={!isCompleted ? "Silakan lengkapi data diri Anda sebelum masuk ke sistem." : "Perbarui informasi diri Anda"} 
+      />
       <Card>
         {!isCompleted && (
            <CardHeader className="bg-yellow-50 rounded-t-xl border-b mb-4">
@@ -134,7 +144,7 @@ export default function EditProfilPage() {
                   control={form.control} 
                   name="unit" 
                   render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <SelectTrigger className={errors.unit ? "border-red-500" : ""}>
                         <SelectValue placeholder="Pilih Unit" />
                       </SelectTrigger>
@@ -150,6 +160,7 @@ export default function EditProfilPage() {
               <div className="space-y-2">
                 <Label>Tahun Angkatan</Label>
                 <Input type="number" {...form.register('angkatan')} className={errors.angkatan ? "border-red-500" : ""} />
+                {errors.angkatan && <p className="text-xs text-red-500">{errors.angkatan.message as string}</p>}
               </div>
             </div>
             
@@ -161,7 +172,7 @@ export default function EditProfilPage() {
                   control={form.control} 
                   name="semester" 
                   render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value || ""}>
                       <SelectTrigger><SelectValue placeholder="Pilih Semester" /></SelectTrigger>
                       <SelectContent>
                         {[1,2,3,4,5,6,7,8].map(s => <SelectItem key={s} value={s.toString()}>{s}</SelectItem>)}
