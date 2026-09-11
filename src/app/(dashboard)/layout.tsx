@@ -7,8 +7,6 @@ export default async function Layout({ children }: { children: React.ReactNode }
   
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-
-  if (!profile?.is_completed) redirect('/mahasiswa/profil')
   
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile) redirect('/login')
