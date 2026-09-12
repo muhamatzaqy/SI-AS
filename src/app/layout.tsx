@@ -2,10 +2,10 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
 
-// UBAH BARIS INI: Ambil Toaster dari folder shared tempat Anda menyimpannya dulu
-import { Toaster } from "@/components/shared/toast-provider" 
+// UBAH IMPORT INI: Ambil langsung dari 'sonner'
+import { Toaster } from 'sonner'
 
 const geistSans = GeistSans;
 const geistMono = GeistMono;
@@ -27,8 +27,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
         
-        {/* WADAH TOAST TETAP DI SINI */}
-        <Toaster />
+        {/* WADAH TOAST DIUBAH KE SONNER */}
+        <Toaster position="top-center" richColors />
         
       </body>
     </html>
