@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users, Search, CheckCircle2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users, Search, CheckCircle2, Lock } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- SKEMA VALIDASI ZOD ---
@@ -95,7 +95,8 @@ export default function JadwalDanMasterPage() {
     setLoading(true)
     const { data } = await supabase
       .from('sesi')
-      .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis)), presensi(mahasiswa_id)')
+      // PERBAIKAN: Menambahkan jenis_id di dalam nama_kegiatan agar bisa di-load saat edit
+      .select('*, nama_kegiatan(id, nama_kegiatan, jenis_id, jenis_kegiatan(id, nama_jenis)), presensi(mahasiswa_id)')
       .order('tanggal', { ascending: false })
     
     setJadwals(data ?? [])
@@ -107,19 +108,15 @@ export default function JadwalDanMasterPage() {
     fetchJadwals() 
   }, [])
 
-  // --- FIX ZONA WAKTU: Perbandingan Selesai Berdasarkan WIB ---
   const isJadwalFinished = (jadwal: any): boolean => {
     try {
       const now = new Date()
-      // Dapatkan tanggal hari ini format YYYY-MM-DD zona WIB
       const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
       
-      if (jadwal.tanggal > todayStr) return false // Tanggal masih di masa depan
-      if (jadwal.tanggal < todayStr) return true  // Tanggal sudah lewat
+      if (jadwal.tanggal > todayStr) return false 
+      if (jadwal.tanggal < todayStr) return true  
       
-      // Jika tanggalnya HARI INI, bandingkan jam selesainya dengan jam sekarang (WIB)
       const currentTimeStr = now.toLocaleTimeString('en-US', { timeZone: 'Asia/Jakarta', hour12: false })
-      // currentTimeStr berformat "HH:MM:SS"
       return currentTimeStr >= jadwal.jam_selesai
     } catch { 
       return false 
@@ -219,6 +216,8 @@ export default function JadwalDanMasterPage() {
       }
 
       if (editingSesi) {
+        // Jika edit, HAPUS nama_kegiatan_id dari payload agar tidak mengubah master kegiatan aslinya untuk keamanan ekstra.
+        delete (payload as any).nama_kegiatan_id
         const { error } = await supabase.from('sesi').update(payload).eq('id', editingSesi.id)
         if (error) throw error
       } else {
@@ -266,15 +265,16 @@ export default function JadwalDanMasterPage() {
     }
 
     formSesi.reset({ 
-      jenis_id: j.nama_kegiatan?.jenis_kegiatan?.id || '',
-      nama_kegiatan_id: j.nama_kegiatan_id, 
+      // PERBAIKAN: Mengambil jenis_id dengan benar berkat query baru di fetchJadwals
+      jenis_id: j.nama_kegiatan?.jenis_id || '',
+      nama_kegiatan_id: j.nama_kegiatan_id || '', 
       tipe_target: j.tipe_target as any,
       target_unit: mappedUnit, 
       target_semester: mappedSemester,
       target_custom_ids: mappedCustomIds,
       tanggal: j.tanggal, 
-      jam_mulai: j.jam_mulai.slice(0,5), 
-      jam_selesai: j.jam_selesai.slice(0,5),
+      jam_mulai: j.jam_mulai ? j.jam_mulai.slice(0,5) : '', 
+      jam_selesai: j.jam_selesai ? j.jam_selesai.slice(0,5) : '',
     })
     setDialogSesiOpen(true)
   }
@@ -498,8 +498,10 @@ export default function JadwalDanMasterPage() {
       <Dialog open={dialogSesiOpen} onOpenChange={setDialogSesiOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editingSesi ? 'Edit Jadwal Sesi' : 'Tambah Jadwal Sesi'}</DialogTitle>
-            <DialogDescription>Jadwalkan kajian atau kegiatan untuk mahasiswa.</DialogDescription>
+            <DialogTitle>{editingSesi ? 'Edit Waktu & Peserta Sesi' : 'Tambah Jadwal Sesi'}</DialogTitle>
+            <DialogDescription>
+              {editingSesi ? 'Anda hanya bisa mengubah waktu dan target peserta untuk jadwal yang sudah dibuat.' : 'Jadwalkan kajian atau kegiatan untuk mahasiswa.'}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={formSesi.handleSubmit(onSubmitSesi)} className="space-y-4">
@@ -511,19 +513,39 @@ export default function JadwalDanMasterPage() {
 
             <div className="grid grid-cols-2 gap-3 p-3 bg-muted/30 rounded-lg border">
               <div className="space-y-2">
-                <Label>Jenis Kegiatan</Label>
+                <Label className="flex items-center justify-between">
+                  Jenis Kegiatan
+                  {/* PERBAIKAN: Tampilkan icon gembok jika sedang edit */}
+                  {editingSesi && <Lock className="h-3 w-3 text-muted-foreground" />}
+                </Label>
                 <Controller control={formSesi.control} name="jenis_id" render={({ field }) => (
-                  <Select onValueChange={(val) => { field.onChange(val); formSesi.setValue('nama_kegiatan_id', '') }} value={field.value}>
-                    <SelectTrigger className={`bg-background ${formSesi.formState.errors.jenis_id ? "border-red-500" : ""}`}><SelectValue placeholder="Pilih jenis..." /></SelectTrigger>
+                  <Select 
+                    onValueChange={(val) => { field.onChange(val); formSesi.setValue('nama_kegiatan_id', '') }} 
+                    value={field.value}
+                    disabled={!!editingSesi} // PERBAIKAN: Dikunci jika edit
+                  >
+                    <SelectTrigger className={`bg-background ${formSesi.formState.errors.jenis_id ? "border-red-500" : ""} disabled:opacity-70 disabled:bg-muted`}>
+                      <SelectValue placeholder="Pilih jenis..." />
+                    </SelectTrigger>
                     <SelectContent>{masterJenis.map(opt => <SelectItem key={opt.id} value={opt.id}>{opt.nama_jenis}</SelectItem>)}</SelectContent>
                   </Select>
                 )}/>
               </div>
               <div className="space-y-2">
-                <Label>Nama Kegiatan</Label>
+                <Label className="flex items-center justify-between">
+                  Nama Kegiatan
+                  {/* PERBAIKAN: Tampilkan icon gembok jika sedang edit */}
+                  {editingSesi && <Lock className="h-3 w-3 text-muted-foreground" />}
+                </Label>
                 <Controller control={formSesi.control} name="nama_kegiatan_id" render={({ field }) => (
-                  <Select onValueChange={field.onChange} value={field.value} disabled={!watchedJenisId}>
-                    <SelectTrigger className={`bg-background ${formSesi.formState.errors.nama_kegiatan_id ? "border-red-500" : ""}`}><SelectValue placeholder="Pilih kegiatan..." /></SelectTrigger>
+                  <Select 
+                    onValueChange={field.onChange} 
+                    value={field.value} 
+                    disabled={!!editingSesi || !watchedJenisId} // PERBAIKAN: Dikunci jika edit
+                  >
+                    <SelectTrigger className={`bg-background ${formSesi.formState.errors.nama_kegiatan_id ? "border-red-500" : ""} disabled:opacity-70 disabled:bg-muted`}>
+                      <SelectValue placeholder="Pilih kegiatan..." />
+                    </SelectTrigger>
                     <SelectContent>
                       {filteredKegiatanForSesiDropdown.length === 0 ? (
                         <SelectItem value="empty" disabled>Belum ada data</SelectItem>
@@ -651,7 +673,7 @@ export default function JadwalDanMasterPage() {
 
             <Button type="submit" className="w-full mt-4" disabled={submittingSesi}>
               {submittingSesi ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {editingSesi ? 'Simpan Perubahan' : 'Buat Sesi Baru'}
+              {editingSesi ? 'Simpan Perubahan Waktu/Target' : 'Buat Sesi Baru'}
             </Button>
           </form>
         </DialogContent>
