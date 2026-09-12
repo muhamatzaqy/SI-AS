@@ -27,10 +27,20 @@ export default async function MahasiswaDashboard() {
   if (profile?.role !== 'mahasiswa') redirect(`/${profile?.role ?? 'login'}`)
   if (!profile?.is_completed) redirect('/mahasiswa/profil')
 
-  const today = new Date().toISOString().split('T')[0]
+  // ==========================================
+  // PERBAIKAN ZONA WAKTU (TIMEZONE FIX)
+  // Memaksa server membaca waktu Asia/Jakarta (WIB)
+  // ==========================================
+  const now = new Date()
+  
+  // Ambil tanggal format YYYY-MM-DD sesuai zona waktu WIB
+  const today = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+  
+  // Ambil jam (0-23) sesuai zona waktu WIB
+  const hourString = now.toLocaleTimeString('en-US', { timeZone: 'Asia/Jakarta', hour12: false, hour: 'numeric' })
+  const hour = parseInt(hourString, 10)
   
   // Menentukan sapaan waktu dinamis (Pagi/Siang/Sore/Malam)
-  const hour = new Date().getHours()
   let greetingTime = 'Selamat Pagi'
   if (hour >= 11 && hour < 15) greetingTime = 'Selamat Siang'
   else if (hour >= 15 && hour < 18) greetingTime = 'Selamat Sore'
@@ -45,7 +55,7 @@ export default async function MahasiswaDashboard() {
     supabase
       .from('sesi')
       .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis))')
-      .eq('tanggal', today)
+      .eq('tanggal', today) // Mencari jadwal berdasarkan tanggal WIB
       .order('jam_mulai', { ascending: true }),
     supabase
       .from('tagihan_spp')
@@ -107,7 +117,8 @@ export default async function MahasiswaDashboard() {
             {greetingTime}, {namaPanggilan}! 👋
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Hari ini {formatDate(new Date())}
+            {/* Format date ini juga harus kita pastikan sinkron dengan sistem nanti, tapi untuk sekarang kita biarkan Utils bekerja */}
+            Hari ini {formatDate(new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })))}
           </p>
         </div>
         
@@ -213,7 +224,6 @@ export default async function MahasiswaDashboard() {
               <div className="space-y-5">
                 {activityBreakdown.map((act) => {
                   const pct = calcAttendancePercentage(act.hadir, act.izin, act.alpha)
-                  // Tentukan warna progress bar
                   const barColor = pct >= 75 ? 'bg-green-500' : pct >= 65 ? 'bg-yellow-500' : 'bg-red-500'
                   
                   return (
