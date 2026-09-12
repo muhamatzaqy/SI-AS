@@ -26,7 +26,6 @@ export default function RegisterPage() {
   
   const supabase = createClient()
   
-  // PERBAIKAN: Menambahkan `watch` ke destructuring agar bisa dipakai di bawah
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<RegisterFormData>({ 
     resolver: zodResolver(registerSchema) 
   })
@@ -59,7 +58,6 @@ export default function RegisterPage() {
   }
 
   return (
-    // Background senada dengan halaman login
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0d5c36] p-4 py-8">
       
       {/* Pattern & Ornaments */}
@@ -112,7 +110,6 @@ export default function RegisterPage() {
                 className="h-12 rounded-xl border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:ring-[#0d5c36]" 
                 {...register('email')} 
               />
-              {/* Keterangan Interaktif Email */}
               <div className="flex items-start gap-1.5 mt-1">
                 <Info className="h-3.5 w-3.5 text-[#0d5c36] mt-0.5 shrink-0" />
                 <p className="text-[11px] text-slate-500 leading-tight">
@@ -143,7 +140,6 @@ export default function RegisterPage() {
               </div>
               {/* Keterangan Interaktif Password */}
               <div className="flex items-center gap-1.5 mt-1">
-                {/* PERBAIKAN: Menggunakan variabel passwordValue yang sudah di-watch */}
                 <div className={`h-1.5 w-1.5 rounded-full transition-colors ${passwordValue?.length >= 6 ? 'bg-green-500' : 'bg-slate-300'}`} />
                 <p className={`text-[11px] transition-colors ${passwordValue?.length >= 6 ? 'text-green-600 font-medium' : 'text-slate-500'}`}>
                   Minimal 6 karakter
