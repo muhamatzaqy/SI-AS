@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Loader2, Pencil, X } from 'lucide-react'
+import { Loader2, Pencil, X, Phone } from 'lucide-react'
 import { UNIT_OPTIONS } from '@/lib/constants'
 
 const profileSchema = z.object({
@@ -22,6 +22,7 @@ const profileSchema = z.object({
   unit: z.enum(['mahad_aly', 'lkim'], { required_error: "Pilih unit asrama" }),
   angkatan: z.coerce.number().min(2000, "Tahun angkatan tidak valid"),
   semester: z.string().optional().or(z.literal('')), 
+  no_telepon: z.string().min(10, "Nomor telepon minimal 10 digit").regex(/^[0-9+]+$/, "Format nomor telepon tidak valid"),
 })
 
 type ProfileFormData = z.infer<typeof profileSchema>
@@ -38,7 +39,7 @@ export default function EditProfilPage() {
   const supabase = createClient()
   const form = useForm<ProfileFormData>({ 
     resolver: zodResolver(profileSchema),
-    defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '', unit: undefined }
+    defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '', unit: undefined, no_telepon: '' }
   })
   
   const { errors } = form.formState
@@ -55,7 +56,7 @@ export default function EditProfilPage() {
 
         const { data, error } = await supabase
           .from('profiles')
-          .select('nama, nim, angkatan, semester, unit, role, is_completed')
+          .select('nama, nim, angkatan, semester, unit, no_telepon, role, is_completed')
           .eq('id', user.id)
           .single()
         
@@ -67,7 +68,8 @@ export default function EditProfilPage() {
             nim: data.nim || '',
             unit: (data.unit === 'mahad_aly' || data.unit === 'lkim') ? data.unit : undefined,
             angkatan: data.angkatan || new Date().getFullYear(),
-            semester: data.semester ? data.semester.toString() : ''
+            semester: data.semester ? data.semester.toString() : '',
+            no_telepon: data.no_telepon || ''
           }
           
           setIsCompleted(data.is_completed ?? false)
@@ -106,6 +108,7 @@ export default function EditProfilPage() {
         unit: data.unit,
         angkatan: data.angkatan,
         semester: data.semester ? parseInt(data.semester) : null,
+        no_telepon: data.no_telepon,
         is_completed: true 
       }
       
@@ -144,7 +147,7 @@ export default function EditProfilPage() {
         {!isCompleted && (
            <CardHeader className="bg-yellow-50 rounded-t-xl border-b mb-4">
              <CardTitle className="text-yellow-800 text-lg">Perhatian</CardTitle>
-             <CardDescription className="text-yellow-700">Anda wajib mengisi form ini dengan benar sebelum bisa melakukan absensi.</CardDescription>
+             <CardDescription className="text-yellow-700">Nomor telepon wajib diisi dengan nomor WhatsApp aktif untuk keperluan notifikasi asrama.</CardDescription>
            </CardHeader>
         )}
         
@@ -167,6 +170,12 @@ export default function EditProfilPage() {
               <div className="grid grid-cols-3 border-b pb-3">
                 <span className="text-sm font-medium text-muted-foreground">NIM</span>
                 <span className="col-span-2 font-medium">{originalData.nim}</span>
+              </div>
+              <div className="grid grid-cols-3 border-b pb-3">
+                <span className="text-sm font-medium text-muted-foreground">No. WhatsApp</span>
+                <span className="col-span-2 font-medium flex items-center gap-1.5 text-green-700">
+                  <Phone className="h-3.5 w-3.5" /> {originalData.no_telepon}
+                </span>
               </div>
               <div className="grid grid-cols-3 border-b pb-3">
                 <span className="text-sm font-medium text-muted-foreground">Unit Asrama</span>
@@ -198,6 +207,12 @@ export default function EditProfilPage() {
                 <Label>NIM / Nomor Induk</Label>
                 <Input {...form.register('nim')} className={errors.nim ? "border-red-500" : ""} />
                 {errors.nim && <p className="text-xs text-red-500">{errors.nim.message}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Nomor WhatsApp yang masuk di grup KOMPLEK H (Contoh: 08123456789)</Label>
+                <Input placeholder="08..." {...form.register('no_telepon')} className={errors.no_telepon ? "border-red-500" : ""} />
+                {errors.no_telepon && <p className="text-xs text-red-500">{errors.no_telepon.message}</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -245,7 +260,6 @@ export default function EditProfilPage() {
                 </div>
               )}
               
-              {/* PERBAIKAN TATA LETAK TOMBOL DI SINI */}
               <div className="flex flex-col-reverse sm:flex-row gap-3 !mt-8">
                 {isCompleted && (
                   <Button type="button" variant="outline" className="w-full sm:flex-1" onClick={handleCancel} disabled={submitting}>
