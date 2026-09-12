@@ -30,7 +30,11 @@ const sesiFormSchema = z.object({
   tanggal: z.string().min(1, "Tanggal wajib diisi"),
   jam_mulai: z.string().min(1, "Jam mulai wajib diisi"),
   jam_selesai: z.string().min(1, "Jam selesai wajib diisi"),
+}).refine(data => data.jam_selesai > data.jam_mulai, {
+  message: "Jam selesai harus lebih besar dari jam mulai",
+  path: ["jam_selesai"]
 })
+
 type SesiFormData = z.infer<typeof sesiFormSchema>
 
 const masterFormSchema = z.object({
@@ -64,7 +68,8 @@ export default function JadwalDanMasterPage() {
   const [checkingAlphaId, setCheckingAlphaId] = useState<string | null>(null)
 
   const formSesi = useForm<SesiFormData>({ 
-    resolver: zodResolver(sesiFormSchema), defaultValues: { tipe_target: 'semua', target_custom_ids: [] }
+    resolver: zodResolver(sesiFormSchema), 
+    defaultValues: { tipe_target: 'semua', target_custom_ids: [] }
   })
   
   const watchedJenisId = formSesi.watch('jenis_id')
@@ -75,12 +80,10 @@ export default function JadwalDanMasterPage() {
     resolver: zodResolver(masterFormSchema)
   })
 
-  // PERBAIKAN: Mengambil semester dan mengubah aturan filter is_active
   const fetchMasterData = async () => {
     const [resJenis, resKegiatan, resMahasiswa] = await Promise.all([
       supabase.from('jenis_kegiatan').select('*').order('nama_jenis'),
       supabase.from('nama_kegiatan').select('*, jenis_kegiatan(nama_jenis)').order('nama_kegiatan'),
-      // neq('is_active', false) memastikan data null tetap ikut terbaca sebagai true
       supabase.from('profiles').select('id, nama, nim, unit, semester').eq('role', 'mahasiswa').neq('is_active', false).order('nama')
     ])
     setMasterJenis(resJenis.data ?? [])
@@ -88,7 +91,6 @@ export default function JadwalDanMasterPage() {
     setMahasiswaList(resMahasiswa.data ?? [])
   }
 
-  // PERBAIKAN: Join presensi untuk menghitung status kelengkapan absensi
   const fetchJadwals = async () => {
     setLoading(true)
     const { data } = await supabase
@@ -103,21 +105,25 @@ export default function JadwalDanMasterPage() {
   useEffect(() => { 
     fetchMasterData()
     fetchJadwals() 
-  }, []) // eslint-disable-line
+  }, [])
 
+  // --- FIX ZONA WAKTU: Perbandingan Selesai Berdasarkan WIB ---
   const isJadwalFinished = (jadwal: any): boolean => {
     try {
       const now = new Date()
-      const jadwalDate = new Date(jadwal.tanggal)
-      if (jadwalDate > now) return false
-      if (jadwalDate.toDateString() === now.toDateString()) {
-        const [hour, min] = jadwal.jam_selesai.split(':').map(Number)
-        const jamSelesaiDate = new Date(now)
-        jamSelesaiDate.setHours(hour, min, 0, 0)
-        return now > jamSelesaiDate
-      }
-      return true
-    } catch { return false }
+      // Dapatkan tanggal hari ini format YYYY-MM-DD zona WIB
+      const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+      
+      if (jadwal.tanggal > todayStr) return false // Tanggal masih di masa depan
+      if (jadwal.tanggal < todayStr) return true  // Tanggal sudah lewat
+      
+      // Jika tanggalnya HARI INI, bandingkan jam selesainya dengan jam sekarang (WIB)
+      const currentTimeStr = now.toLocaleTimeString('en-US', { timeZone: 'Asia/Jakarta', hour12: false })
+      // currentTimeStr berformat "HH:MM:SS"
+      return currentTimeStr >= jadwal.jam_selesai
+    } catch { 
+      return false 
+    }
   }
 
   const handleOpenMarkAlpha = async (jadwal: any) => {
@@ -176,7 +182,7 @@ export default function JadwalDanMasterPage() {
 
       setMarkAlpaDialogOpen(false)
       setSelectedJadwalForAlpha(null)
-      fetchJadwals() // Segarkan hitungan jumlah absen di UI
+      fetchJadwals() 
       
     } catch (error: any) {
       toast({ title: 'Aksi Ditolak', description: error.message, variant: 'destructive' })
@@ -362,7 +368,7 @@ export default function JadwalDanMasterPage() {
                     const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
 
                     // --- KALKULATOR KELENGKAPAN PRESENSI ---
-                    let targetMahasiswaIds = [];
+                    let targetMahasiswaIds: string[] = [];
                     if (j.tipe_target === 'semua') {
                         targetMahasiswaIds = mahasiswaList.map(m => m.id);
                     } else if (j.tipe_target === 'unit') {
@@ -377,7 +383,6 @@ export default function JadwalDanMasterPage() {
                     const uniquePresensiIds = new Set((j.presensi || []).map((p: any) => p.mahasiswa_id));
                     const currentCount = uniquePresensiIds.size;
                     
-                    // Cek jika jumlah absen sudah sama dengan target peserta
                     const isComplete = currentCount >= targetCount && targetCount > 0;
                     
                     return (
@@ -397,8 +402,6 @@ export default function JadwalDanMasterPage() {
                         </div>
                         
                         <div className="flex gap-2 shrink-0 items-center">
-                          
-                          {/* --- TOMBOL TANDAI ALPHA HILANG JIKA LENGKAP --- */}
                           {finished && (
                             isComplete ? (
                               <Badge variant="success" className="h-9 px-3 text-sm flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
@@ -491,6 +494,7 @@ export default function JadwalDanMasterPage() {
         </TabsContent>
       </Tabs>
 
+      {/* DIALOG SESI */}
       <Dialog open={dialogSesiOpen} onOpenChange={setDialogSesiOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -499,7 +503,12 @@ export default function JadwalDanMasterPage() {
           </DialogHeader>
 
           <form onSubmit={formSesi.handleSubmit(onSubmitSesi)} className="space-y-4">
-            
+            {formSesi.formState.errors.jam_selesai && (
+              <div className="p-3 bg-red-50 text-red-700 text-xs rounded-md border border-red-200">
+                ⚠️ {formSesi.formState.errors.jam_selesai.message}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 p-3 bg-muted/30 rounded-lg border">
               <div className="space-y-2">
                 <Label>Jenis Kegiatan</Label>
@@ -564,12 +573,7 @@ export default function JadwalDanMasterPage() {
                         <Select onValueChange={field.onChange} value={field.value} disabled={watchedUnit === 'lkim'}>
                           <SelectTrigger className="bg-background"><SelectValue placeholder="Pilih semester" /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="1">Semester 1</SelectItem>
-                            <SelectItem value="2">Semester 2</SelectItem>
-                            <SelectItem value="3">Semester 3</SelectItem>
-                            <SelectItem value="4">Semester 4</SelectItem>
-                            <SelectItem value="5">Semester 5</SelectItem>
-                            <SelectItem value="6">Semester 6</SelectItem>
+                            {[1,2,3,4,5,6,7,8].map(s => <SelectItem key={s} value={s.toString()}>{s}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       )}/>
@@ -653,6 +657,7 @@ export default function JadwalDanMasterPage() {
         </DialogContent>
       </Dialog>
 
+      {/* DIALOG MASTER */}
       <Dialog open={dialogMasterOpen} onOpenChange={setDialogMasterOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -681,6 +686,7 @@ export default function JadwalDanMasterPage() {
         </DialogContent>
       </Dialog>
 
+      {/* DIALOG MARK ALPHA */}
       {markAlpaDialogOpen && selectedJadwalForAlpha && (
         <Dialog open={markAlpaDialogOpen} onOpenChange={setMarkAlpaDialogOpen}>
           <DialogContent className="max-w-md">
@@ -711,3 +717,5 @@ export default function JadwalDanMasterPage() {
     </div>
   )
 }
+
+export const dynamic = 'force-dynamic'
