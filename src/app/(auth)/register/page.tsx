@@ -22,12 +22,17 @@ type RegisterFormData = z.infer<typeof registerSchema>
 export default function RegisterPage() {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
-  const [showPassword, setShowPassword] = useState(false) // State untuk interaktif password
+  const [showPassword, setShowPassword] = useState(false) 
   
   const supabase = createClient()
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<RegisterFormData>({ 
+  
+  // PERBAIKAN: Menambahkan `watch` ke destructuring agar bisa dipakai di bawah
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<RegisterFormData>({ 
     resolver: zodResolver(registerSchema) 
   })
+
+  // Pantau ketikan password secara real-time untuk mengubah warna indikator
+  const passwordValue = watch('password', '')
 
   const onSubmit = async (data: RegisterFormData) => {
     setError(null)
@@ -40,7 +45,7 @@ export default function RegisterPage() {
     
     if (authError) { 
       setError(authError.message)
-      toast.error("Pendaftaran gagal: " + authError.message) // Toast jika gagal
+      toast.error("Pendaftaran gagal: " + authError.message) 
       return 
     }
     
@@ -138,8 +143,11 @@ export default function RegisterPage() {
               </div>
               {/* Keterangan Interaktif Password */}
               <div className="flex items-center gap-1.5 mt-1">
-                <div className={`h-1.5 w-1.5 rounded-full ${formState?.watch('password')?.length >= 6 ? 'bg-green-500' : 'bg-slate-300'}`} />
-                <p className="text-[11px] text-slate-500">Minimal 6 karakter</p>
+                {/* PERBAIKAN: Menggunakan variabel passwordValue yang sudah di-watch */}
+                <div className={`h-1.5 w-1.5 rounded-full transition-colors ${passwordValue?.length >= 6 ? 'bg-green-500' : 'bg-slate-300'}`} />
+                <p className={`text-[11px] transition-colors ${passwordValue?.length >= 6 ? 'text-green-600 font-medium' : 'text-slate-500'}`}>
+                  Minimal 6 karakter
+                </p>
               </div>
               {errors.password && <p className="text-xs text-red-500 mt-1">{errors.password.message}</p>}
             </div>
