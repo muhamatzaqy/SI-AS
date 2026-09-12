@@ -32,7 +32,6 @@ export default function EditProfilPage() {
   const [submitting, setSubmitting] = useState(false)
   const [isCompleted, setIsCompleted] = useState(false)
   
-  // State baru untuk mengatur mode Edit & menyimpan data asli untuk fitur Batal
   const [isEditing, setIsEditing] = useState(false)
   const [originalData, setOriginalData] = useState<ProfileFormData | null>(null)
   
@@ -73,9 +72,8 @@ export default function EditProfilPage() {
           
           setIsCompleted(data.is_completed ?? false)
           form.reset(fetchedData)
-          setOriginalData(fetchedData) // Simpan sebagai backup untuk fitur 'Batal'
+          setOriginalData(fetchedData)
 
-          // Jika profil belum lengkap, paksa masuk ke mode Edit
           if (!data.is_completed) {
             setIsEditing(true)
           }
@@ -89,7 +87,6 @@ export default function EditProfilPage() {
     loadProfile()
   }, [supabase, form, router])
 
-  // Fungsi untuk membatalkan edit dan mengembalikan data seperti semula
   const handleCancel = () => {
     if (originalData) {
       form.reset(originalData)
@@ -116,17 +113,15 @@ export default function EditProfilPage() {
       if (error) throw error
 
       toast.success('Profil berhasil disimpan!')
-      setOriginalData(data) // Perbarui data backup
+      setOriginalData(data)
       
       if (!isCompleted) {
-        // Jika ini adalah pengisian pertama (isCompleted false), delay 1.5 detik agar toast terbaca, baru redirect
         setIsCompleted(true)
         setTimeout(() => {
           router.push('/mahasiswa')
           router.refresh()
         }, 1500)
       } else {
-        // Jika hanya update biasa, langsung kembalikan ke mode Lihat (View Mode)
         setIsEditing(false)
       }
       
@@ -153,7 +148,6 @@ export default function EditProfilPage() {
            </CardHeader>
         )}
         
-        {/* Tombol Edit muncul di header card jika profil sudah lengkap & sedang tidak di mode edit */}
         {isCompleted && !isEditing && (
           <div className="px-6 pt-6 flex justify-end">
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
@@ -164,7 +158,6 @@ export default function EditProfilPage() {
 
         <CardContent className={isCompleted && !isEditing ? "pt-2 pb-8" : "pt-6"}>
           
-          {/* MODE VIEW (READ-ONLY) */}
           {!isEditing && originalData ? (
             <div className="space-y-5">
               <div className="grid grid-cols-3 border-b pb-3">
@@ -194,8 +187,7 @@ export default function EditProfilPage() {
             </div>
           ) : (
             
-            /* MODE EDIT (FORM) */
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 animate-in fade-in">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <div className="space-y-2">
                 <Label>Nama Lengkap</Label>
                 <Input {...form.register('nama')} className={errors.nama ? "border-red-500" : ""} />
@@ -253,15 +245,15 @@ export default function EditProfilPage() {
                 </div>
               )}
               
-              <div className="flex gap-3 !mt-8">
-                {/* Tombol Batal hanya muncul jika profil sudah lengkap (isCompleted true) */}
+              {/* PERBAIKAN TATA LETAK TOMBOL DI SINI */}
+              <div className="flex flex-col-reverse sm:flex-row gap-3 !mt-8">
                 {isCompleted && (
-                  <Button type="button" variant="outline" className="w-full" onClick={handleCancel} disabled={submitting}>
+                  <Button type="button" variant="outline" className="w-full sm:flex-1" onClick={handleCancel} disabled={submitting}>
                     <X className="mr-2 h-4 w-4" /> Batal
                   </Button>
                 )}
                 
-                <Button type="submit" className="w-full" disabled={submitting}>
+                <Button type="submit" className="w-full sm:flex-1" disabled={submitting}>
                   {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Simpan Profil'}
                 </Button>
               </div>
@@ -273,3 +265,4 @@ export default function EditProfilPage() {
     </div>
   )
 }
+export const dynamic = 'force-dynamic'
