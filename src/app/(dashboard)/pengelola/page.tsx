@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { StatCard } from '@/components/shared/stat-card'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users, Calendar, CheckSquare, CreditCard, ArrowRight, BarChart3 } from 'lucide-react'
-import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
+import { Users, Calendar, CheckSquare, CreditCard, ArrowRight } from 'lucide-react'
+import { formatDate, formatCurrency, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
 import Link from 'next/link'
 
 export default async function PengelolaDashboard() {
@@ -15,7 +15,10 @@ export default async function PengelolaDashboard() {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'pengelola') redirect(`/${profile?.role ?? 'login'}`)
 
-  // Mengambil total perhitungan stat card
+  // Dapatkan tanggal hari ini format YYYY-MM-DD sesuai WIB (Asia/Jakarta)
+  const todayWIB = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+
+  // Mengambil total perhitungan stat card secara parallel
   const [
     { count: totalMahasiswa }, 
     { count: totalJadwal }, 
@@ -24,7 +27,7 @@ export default async function PengelolaDashboard() {
     { count: pendingSpp }
   ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'mahasiswa').eq('is_active', true),
-    supabase.from('sesi').select('*', { count: 'exact', head: true }).eq('tanggal', new Date().toISOString().split('T')[0]),
+    supabase.from('sesi').select('*', { count: 'exact', head: true }).eq('tanggal', todayWIB),
     supabase.from('izin_sesi').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('izin_pulang').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('tagihan_spp').select('*', { count: 'exact', head: true }).eq('status', 'menunggu_verifikasi'),
@@ -33,21 +36,20 @@ export default async function PengelolaDashboard() {
   const pendingIzinTotal = (pendingIzinSesi ?? 0) + (pendingIzinPulang ?? 0)
 
   // Mengambil data perizinan terbaru (gabungan dari izin sesi dan izin pulang)
-  const { data: recentIzinSesiData } = await supabase
-    .from('izin_sesi')
-    .select('*, profiles(nama, nim)')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false })
-    .limit(5)
+  const [
+    { data: recentIzinSesiData },
+    { data: recentIzinPulangData },
+    { data: recentSpp },
+    { data: allPresensi }
+  ] = await Promise.all([
+    supabase.from('izin_sesi').select('*, profiles(nama, nim)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
+    supabase.from('izin_pulang').select('*, profiles(nama, nim)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
+    supabase.from('tagihan_spp').select('*, profiles(nama, nim), master_tarif(nominal)').eq('status', 'menunggu_verifikasi').order('created_at', { ascending: false }).limit(5),
+    // PERBAIKAN RELASI: Mengambil nama kegiatan melalui relasi tabel sesi -> nama_kegiatan
+    supabase.from('presensi').select('status, sesi(nama_kegiatan(nama_kegiatan))')
+  ])
 
-  const { data: recentIzinPulangData } = await supabase
-    .from('izin_pulang')
-    .select('*, profiles(nama, nim)')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false })
-    .limit(5)
-
-  // Menggabungkan dan mengurutkan berdasarkan yang terbaru
+  // Menggabungkan dan mengurutkan perizinan berdasarkan yang terbaru
   const recentIzin = [
     ...(recentIzinSesiData || []).map(i => ({ ...i, type: 'Sesi', alasan: i.alasan_izin })),
     ...(recentIzinPulangData || []).map(i => ({ ...i, type: 'Pulang', alasan: i.keterangan }))
@@ -55,29 +57,11 @@ export default async function PengelolaDashboard() {
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 5)
 
-  // Fetch SPP terbaru (Join dengan master_tarif untuk mendapatkan nominal)
-  const { data: recentSpp } = await supabase
-    .from('tagihan_spp')
-    .select('*, profiles(nama, nim), master_tarif(nominal)')
-    .eq('status', 'menunggu_verifikasi')
-    .order('created_at', { ascending: false })
-    .limit(5)
-
-  // PENTING: Fetch presensi diubah karena nama_kegiatan sekarang ada di dalam tabel sesi
-  const { data: allPresensi } = await supabase
-    .from('presensi')
-    .select(`
-      status, 
-      sesi (
-        nama_kegiatan
-      )
-    `)
-
-  // Hitung rata-rata kehadiran
+  // Hitung rata-rata kehadiran per kegiatan
   const activityStats: Record<string, { nama: string; hadir: number; izin: number; alpha: number }> = {}
   ;(allPresensi ?? []).forEach((p: any) => {
-    // PENTING: Path untuk memanggil nama_kegiatan disederhanakan
-    const nama = p.sesi?.nama_kegiatan ?? 'Lainnya'
+    // Menyesuaikan dengan struktur nested join Supabase
+    const nama = p.sesi?.nama_kegiatan?.nama_kegiatan ?? 'Kegiatan Lainnya'
     if (!activityStats[nama]) activityStats[nama] = { nama, hadir: 0, izin: 0, alpha: 0 }
     
     if (p.status === 'hadir') activityStats[nama].hadir++
