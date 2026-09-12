@@ -1,18 +1,19 @@
 'use client'
-import { useEffect, useRef, useState, useCallback } from 'react'
+
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useGeolocation } from '@/hooks/use-geolocation'
 import { useCamera } from '@/hooks/use-camera'
-import { Camera, MapPin, Check, Loader2, AlertCircle, Map } from 'lucide-react'
+import { Camera, MapPin, Check, Loader2, AlertCircle, Map, CalendarX, Info } from 'lucide-react'
 import { IMAGE_COMPRESSION_OPTIONS } from '@/lib/constants'
-import { formatDate, formatLabel } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 
 export default function AbsensiPage() {
   const [jadwals, setJadwals] = useState<any[]>([])
@@ -21,13 +22,28 @@ export default function AbsensiPage() {
   const [presensiMap, setPresensiMap] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   
-  // State untuk mengontrol visibilitas Modal
   const [isModalOpen, setIsModalOpen] = useState(false)
 
   const { toast } = useToast()
   const { latitude, longitude, error: geoError, loading: geoLoading, getLocation } = useGeolocation()
   const { photoUrl, photoBlob, isCapturing, error: cameraError, videoRef, canvasRef, startCamera, capturePhoto, resetPhoto } = useCamera()
   const supabase = createClient()
+
+  // Helper untuk mendapatkan waktu WIB saat ini
+  const getWaktuWIB = () => {
+    const now = new Date()
+    const formatterHour = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', hour: 'numeric', hour12: false })
+    const formatterMin = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', minute: 'numeric' })
+    
+    const currentHours = parseInt(formatterHour.format(now), 10)
+    const currentMinutes = parseInt(formatterMin.format(now), 10)
+    
+    return {
+      dateObj: now,
+      dateString: now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }), // Format YYYY-MM-DD
+      totalMinutes: currentHours * 60 + currentMinutes
+    }
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -41,13 +57,14 @@ export default function AbsensiPage() {
         .eq('id', user.id)
         .single()
       
-      const today = new Date().toISOString().split('T')[0]
+      // MENGGUNAKAN ZONA WAKTU WIB
+      const wib = getWaktuWIB()
       
       const { data: sesiData } = await supabase
         .from('sesi')
         .select('*, nama_kegiatan(nama_kegiatan)')
-        .eq('tanggal', today)
-        .order('jam_mulai', { ascending: true }) // Urutkan berdasarkan waktu paling awal
+        .eq('tanggal', wib.dateString)
+        .order('jam_mulai', { ascending: true })
       
       const validSesi = (sesiData ?? []).filter((s: any) => {
         if (s.tipe_target === 'semua') return true
@@ -81,18 +98,13 @@ export default function AbsensiPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // --- LOGIKA WAKTU ---
+  // --- LOGIKA WAKTU (SUDAH FIX WIB) ---
   const checkStatusWaktu = (jadwal: any) => {
     if (!jadwal || !jadwal.jam_mulai || !jadwal.jam_selesai) return { status: 'unknown', text: '' }
     
     try {
-      const now = new Date()
-      
-      // Ambil waktu saat ini (jam dan menit) dalam bentuk angka agar mudah dibandingkan
-      // Gunakan timezone WIB (GMT+7) jika diperlukan, tapi Date() bawaan browser sudah mengikuti lokal user
-      const currentHours = now.getHours()
-      const currentMinutes = now.getMinutes()
-      const currentTimeValue = currentHours * 60 + currentMinutes
+      const wib = getWaktuWIB()
+      const currentTimeValue = wib.totalMinutes
 
       const [startHour, startMin] = jadwal.jam_mulai.split(':').map(Number)
       const startTimeValue = startHour * 60 + startMin
@@ -101,11 +113,11 @@ export default function AbsensiPage() {
       const endTimeValue = endHour * 60 + endMin
 
       if (currentTimeValue < startTimeValue) {
-        return { status: 'early', text: 'Belum Dimulai' } // Sesi belum mulai
+        return { status: 'early', text: 'Belum Dimulai' }
       } else if (currentTimeValue >= startTimeValue && currentTimeValue <= endTimeValue) {
-        return { status: 'active', text: 'Mulai Absen' } // Sesi sedang berlangsung
+        return { status: 'active', text: 'Mulai Absen' }
       } else {
-        return { status: 'late', text: 'Sesi Ditutup' } // Sesi sudah lewat
+        return { status: 'late', text: 'Sesi Ditutup' }
       }
     } catch { 
       return { status: 'unknown', text: '' } 
@@ -115,19 +127,18 @@ export default function AbsensiPage() {
   const getTimeRemaining = (jadwal: any): string | null => {
     if (!jadwal || !jadwal.jam_selesai) return null
     try {
-      const now = new Date()
-      const batasDate = new Date(now)
-      const [hour, min] = jadwal.jam_selesai.split(':').map(Number)
-      batasDate.setHours(hour, min, 0, 0)
+      const wib = getWaktuWIB()
       
-      const diff = batasDate.getTime() - now.getTime()
-      if (diff <= 0) return 'Waktu habis'
+      const [endHour, endMin] = jadwal.jam_selesai.split(':').map(Number)
+      const endTimeValue = endHour * 60 + endMin
       
-      const minutes = Math.floor(diff / 60000)
-      if (minutes < 1) return 'Kurang dari 1 menit'
-      if (minutes < 60) return `${minutes} menit lagi`
-      const hours = Math.floor(minutes / 60)
-      return `${hours}j ${minutes % 60}m lagi`
+      const diffMinutes = endTimeValue - wib.totalMinutes
+      
+      if (diffMinutes <= 0) return 'Waktu habis'
+      if (diffMinutes < 1) return 'Kurang dari 1 menit'
+      if (diffMinutes < 60) return `${diffMinutes} menit lagi`
+      const hours = Math.floor(diffMinutes / 60)
+      return `${hours}j ${diffMinutes % 60}m lagi`
     } catch { return null }
   }
 
@@ -149,12 +160,11 @@ export default function AbsensiPage() {
   const handleAbsen = async () => {
     if (!selectedJadwal) return
     
-    // Validasi Waktu Ketat (Siapa tahu modal di-diamkan lama sampai jam habis)
     const waktuCheck = checkStatusWaktu(selectedJadwal)
     if (waktuCheck.status === 'late') {
       toast({ title: 'Waktu Habis', description: 'Waktu absensi sudah ditutup.', variant: 'destructive' })
       setIsModalOpen(false)
-      fetchData() // Refresh untuk update UI
+      fetchData()
       return
     }
 
@@ -181,7 +191,7 @@ export default function AbsensiPage() {
         mahasiswa_id: user.id,
         sesi_id: selectedJadwal.id,
         status: 'hadir',
-        waktu_absen: new Date().toISOString(),
+        waktu_absen: new Date().toISOString(), // Supabase otomatis convert ke UTC, aman
         foto_url: fotoUrl,
         latitude: latitude,
         longitude: longitude
@@ -205,61 +215,89 @@ export default function AbsensiPage() {
     setSelectedJadwal(jadwal)
     resetPhoto()
     setIsModalOpen(true)
-    // Beri sedikit waktu agar modal ter-render sebelum memanggil lokasi, mencegah lag
     setTimeout(() => {
       getLocation()
     }, 300)
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <PageHeader title="Absensi Digital" description={`Jadwal sesi hari ini - ${formatDate(new Date())}`} />
+    <div className="space-y-6 animate-fade-in slide-in-from-bottom-4 duration-500">
+      <PageHeader title="Absensi Digital" description={`Jadwal sesi hari ini - ${formatDate(new Date(getWaktuWIB().dateString))}`} />
 
       {loading ? (
-        <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}</div>
       ) : jadwals.length === 0 ? (
-        <Card><CardContent className="p-12 text-center text-muted-foreground">Tidak ada jadwal sesi hari ini untuk Anda.</CardContent></Card>
+        <Card className="border-dashed shadow-none">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center px-4">
+            <div className="h-16 w-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+              <CalendarX className="h-8 w-8 text-slate-400" />
+            </div>
+            <p className="text-base font-semibold text-slate-800">Alhamdulillah, Tidak Ada Jadwal</p>
+            <p className="text-sm text-slate-500 mt-1 max-w-sm">Tidak ada jadwal sesi ngaji untuk Anda hari ini. Selamat beristirahat atau gunakan waktu untuk muraja'ah.</p>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {jadwals.map((j: any) => {
             const waktuInfo = checkStatusWaktu(j)
             const isLate = waktuInfo.status === 'late'
             const isEarly = waktuInfo.status === 'early'
             const isActive = waktuInfo.status === 'active'
+            
+            const currentStatus = presensiMap[j.id]
 
             return (
-              <Card key={j.id} className="transition-all hover:border-primary/50">
-                <CardContent className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
-                  <div className="space-y-1 min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-foreground text-base">{j.nama_kegiatan?.nama_kegiatan}</p>
+              <Card key={j.id} className="transition-all hover:border-primary/40 hover:shadow-md overflow-hidden">
+                <CardContent className="flex flex-col md:flex-row md:items-center justify-between gap-5 p-5">
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <p className="font-bold text-foreground text-lg">{j.nama_kegiatan?.nama_kegiatan}</p>
                       
-                      {/* Indikator Status Waktu */}
-                      {isLate && !presensiMap[j.id] && <Badge variant="destructive" className="text-xs">Terlambat</Badge>}
-                      {isEarly && <Badge variant="secondary" className="text-xs">Akan Datang</Badge>}
-                      {isActive && !presensiMap[j.id] && <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Sedang Berlangsung</Badge>}
+                      {/* Lencana Waktu Dinamis */}
+                      {!currentStatus && isLate && <Badge variant="destructive" className="text-[10px] uppercase tracking-wider">Terlambat</Badge>}
+                      {!currentStatus && isEarly && <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">Akan Datang</Badge>}
+                      {!currentStatus && isActive && (
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wider bg-green-50 text-green-700 border-green-200 animate-pulse">
+                          Sedang Berlangsung
+                        </Badge>
+                      )}
                     </div>
                     
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Jam Pelaksanaan: <span className="font-medium text-foreground">{j.jam_mulai.slice(0,5)} – {j.jam_selesai.slice(0,5)} WIB</span>
+                    <p className="text-sm text-muted-foreground flex items-center gap-2">
+                      <span className="inline-block p-1 bg-slate-100 rounded-md">
+                        🕒 {j.jam_mulai.slice(0,5)} – {j.jam_selesai.slice(0,5)} WIB
+                      </span>
                     </p>
                     
-                    {!presensiMap[j.id] && isActive && (
-                      <p className="text-xs text-orange-600 font-medium mt-1">⏱️ Sisa waktu: {getTimeRemaining(j)}</p>
+                    {/* Hitung Mundur (Countdown) */}
+                    {!currentStatus && isActive && (
+                      <p className="text-xs text-orange-600 font-medium mt-2 flex items-center gap-1.5">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Sisa waktu absensi: {getTimeRemaining(j)}
+                      </p>
+                    )}
+
+                    {/* Info tambahan jika Izin (Hasil Trigger Database) */}
+                    {currentStatus === 'izin' && (
+                      <p className="text-xs text-yellow-700 mt-2 flex items-center gap-1.5 bg-yellow-50 w-max px-2.5 py-1 rounded-md border border-yellow-100">
+                        <Info className="h-3.5 w-3.5" /> Diisi otomatis sesuai perizinan asrama.
+                      </p>
                     )}
                   </div>
                   
-                  <div className="shrink-0 flex items-center justify-end w-full sm:w-auto">
-                    {presensiMap[j.id] ? (
-                      <Badge variant={presensiMap[j.id] === 'hadir' ? 'success' : presensiMap[j.id] === 'izin' ? 'warning' : 'destructive'} className="py-1.5 px-3 text-sm">
-                        {presensiMap[j.id] === 'hadir' ? <Check className="mr-1.5 h-4 w-4" /> : null} 
-                        {presensiMap[j.id] === 'hadir' ? 'Hadir' : presensiMap[j.id] === 'izin' ? 'Izin' : 'Alpha'}
+                  <div className="shrink-0 flex items-center justify-end w-full md:w-auto pt-2 md:pt-0 border-t md:border-0 md:pl-4 border-slate-100">
+                    {currentStatus ? (
+                      <Badge 
+                        variant={currentStatus === 'hadir' ? 'success' : currentStatus === 'izin' ? 'warning' : 'destructive'} 
+                        className="py-2 px-4 text-sm font-semibold rounded-lg shadow-sm"
+                      >
+                        {currentStatus === 'hadir' ? <Check className="mr-2 h-4 w-4" /> : null} 
+                        {currentStatus === 'hadir' ? 'Hadir' : currentStatus === 'izin' ? 'Sedang Izin' : 'Alpha (Tidak Hadir)'}
                       </Badge>
                     ) : (
                       <Button 
-                        size="sm" 
-                        className="w-full sm:w-auto" 
-                        disabled={!isActive} // Tombol mati jika kepagian atau kemalaman
+                        size="lg" 
+                        className="w-full md:w-auto rounded-xl shadow-sm" 
+                        disabled={!isActive}
                         onClick={() => openAbsensiModal(j)}
                       >
                         {waktuInfo.text}
@@ -273,7 +311,7 @@ export default function AbsensiPage() {
         </div>
       )}
 
-      {/* --- DIALOG (MODAL) PEREKAMAN ABSENSI --- */}
+      {/* --- DIALOG MODAL (TIDAK ADA PERUBAHAN, HANYA LOGIKA WAKTU DIATAS) --- */}
       <Dialog open={isModalOpen} onOpenChange={(open) => {
         if (!submitting) {
           setIsModalOpen(open)
