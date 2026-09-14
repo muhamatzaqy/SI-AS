@@ -113,7 +113,7 @@ export default function RegisterPage() {
               <div className="flex items-start gap-1.5 mt-1">
                 <Info className="h-3.5 w-3.5 text-[#0d5c36] mt-0.5 shrink-0" />
                 <p className="text-[11px] text-slate-500 leading-tight">
-                  Wajib gunakan email aktif untuk menerima link verifikasi akun.
+                  Wajib gunakan email aktif untuk notifikasi.
                 </p>
               </div>
               {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email.message}</p>}
