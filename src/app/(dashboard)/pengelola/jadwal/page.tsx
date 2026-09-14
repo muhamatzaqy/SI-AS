@@ -19,7 +19,7 @@ import { useToast } from '@/hooks/use-toast'
 import { 
   Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, 
   CalendarDays, Users, Search, CheckCircle2, Lock, 
-  ChevronLeft, ChevronRight 
+  ChevronLeft, ChevronRight, ChevronDown 
 } from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
@@ -71,12 +71,13 @@ export default function JadwalDanMasterPage() {
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
   const [checkingAlphaId, setCheckingAlphaId] = useState<string | null>(null)
 
-  // --- STATE PAGINATION & SEARCH (UPGRADE) ---
+  // --- STATE PAGINATION, SEARCH, & EXPAND (GROUPING) ---
   const ITEMS_PER_PAGE = 10
   
   // State Sesi
   const [searchSesi, setSearchSesi] = useState('')
   const [pageSesi, setPageSesi] = useState(1)
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]) // Menyimpan ID kegiatan yang sedang dibuka
   
   // State Master
   const [searchMaster, setSearchMaster] = useState('')
@@ -141,7 +142,8 @@ export default function JadwalDanMasterPage() {
     }
   }
 
-  // --- FILTER & PAGINATION LOGIC SESI ---
+  // --- LOGIC GROUPING SESI BERDASARKAN NAMA KEGIATAN ---
+  // 1. Filter dulu jadwalnya
   const filteredJadwals = jadwals.filter(j => {
     if (!searchSesi) return true
     const s = searchSesi.toLowerCase()
@@ -150,8 +152,35 @@ export default function JadwalDanMasterPage() {
       j.nama_kegiatan?.jenis_kegiatan?.nama_jenis?.toLowerCase().includes(s)
     )
   })
-  const totalPagesSesi = Math.ceil(filteredJadwals.length / ITEMS_PER_PAGE)
-  const currentDataSesi = filteredJadwals.slice((pageSesi - 1) * ITEMS_PER_PAGE, pageSesi * ITEMS_PER_PAGE)
+
+  // 2. Lakukan Grouping berdasarkan nama_kegiatan_id
+  const groupedJadwals = filteredJadwals.reduce((acc, j) => {
+    const actId = j.nama_kegiatan?.id || 'unknown'
+    if (!acc[actId]) {
+      acc[actId] = {
+        id: actId,
+        nama: j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui',
+        jenis: j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-',
+        sesiList: []
+      }
+    }
+    acc[actId].sesiList.push(j)
+    return acc
+  }, {} as Record<string, any>)
+
+  // 3. Ubah object jadi array dan urutkan berdasarkan nama (Alphabetical)
+  const groupedArray = Object.values(groupedJadwals).sort((a, b) => a.nama.localeCompare(b.nama))
+  
+  // 4. Pagination dilakukan pada level GRUP (bukan level sesi individu)
+  const totalPagesSesi = Math.ceil(groupedArray.length / ITEMS_PER_PAGE)
+  const currentGroupedSesi = groupedArray.slice((pageSesi - 1) * ITEMS_PER_PAGE, pageSesi * ITEMS_PER_PAGE)
+
+  // Fungsi toggle buka/tutup grup
+  const toggleGroup = (id: string) => {
+    setExpandedGroups(prev => 
+      prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]
+    )
+  }
 
   // --- FILTER & PAGINATION LOGIC MASTER ---
   const filteredMaster = masterKegiatan.filter(m => {
@@ -262,12 +291,15 @@ export default function JadwalDanMasterPage() {
         delete (payload as any).nama_kegiatan_id
         const { error } = await supabase.from('sesi').update(payload).eq('id', editingSesi.id)
         if (error) throw error
+        toast({ title: 'Berhasil', description: 'Jadwal sesi diperbarui', variant: 'success' })
       } else {
         const { error } = await supabase.from('sesi').insert(payload)
         if (error) throw error
+        toast({ title: 'Berhasil', description: 'Jadwal sesi tersimpan', variant: 'success' })
+        // Otomatis expand grup baru yang baru ditambahkan
+        setExpandedGroups(prev => prev.includes(payload.nama_kegiatan_id) ? prev : [...prev, payload.nama_kegiatan_id])
       }
       
-      toast({ title: 'Berhasil', description: 'Jadwal sesi tersimpan', variant: 'success' })
       setDialogSesiOpen(false)
       fetchJadwals()
     } catch (err: any) { 
@@ -383,14 +415,14 @@ export default function JadwalDanMasterPage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold">Daftar Sesi Kegiatan</h3>
-              <p className="text-sm text-muted-foreground">Jadwal kegiatan yang sedang atau akan berlangsung.</p>
+              <p className="text-sm text-muted-foreground">Jadwal kegiatan yang sedang atau akan berlangsung dikelompokkan per kegiatan.</p>
             </div>
             
             <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
               <div className="relative w-full sm:w-64">
                 <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input 
-                  placeholder="Cari jadwal..." 
+                  placeholder="Cari kegiatan..." 
                   className="pl-9 bg-background h-9 text-sm"
                   value={searchSesi}
                   onChange={(e) => setSearchSesi(e.target.value)}
@@ -402,119 +434,149 @@ export default function JadwalDanMasterPage() {
             </div>
           </div>
 
-          <Card>
-            <CardContent className="p-0">
-              {loading ? (
-                <div className="space-y-3 p-4">
-                  {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
-                </div>
-              ) : currentDataSesi.length === 0 ? (
+          <div className="space-y-4">
+            {loading ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+              </div>
+            ) : currentGroupedSesi.length === 0 ? (
+              <Card>
                 <div className="p-12 text-center text-muted-foreground flex flex-col items-center">
                   <CalendarDays className="h-10 w-10 opacity-20 mb-3" />
-                  <p>Tidak ada jadwal yang ditemukan.</p>
+                  <p>Tidak ada jadwal kegiatan yang ditemukan.</p>
                 </div>
-              ) : (
-                <>
-                  <div className="divide-y">
-                    {currentDataSesi.map(j => {
-                      const finished = isJadwalFinished(j)
-                      const namaKegiatan = j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui'
-                      const jenisKegiatan = j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-'
-                      const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
-
-                      // Kalkulator kelengkapan
-                      let targetMahasiswaIds: string[] = [];
-                      if (j.tipe_target === 'semua') targetMahasiswaIds = mahasiswaList.map(m => m.id);
-                      else if (j.tipe_target === 'unit') targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit).map(m => m.id);
-                      else if (j.tipe_target === 'unit_semester') targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit && m.semester?.toString() === j.target_audiens?.semester?.toString()).map(m => m.id);
-                      else if (j.tipe_target === 'custom') targetMahasiswaIds = j.target_audiens?.mahasiswa_ids || [];
-
-                      const targetCount = targetMahasiswaIds.length;
-                      const uniquePresensiIds = new Set((j.presensi || []).map((p: any) => p.mahasiswa_id));
-                      const currentCount = uniquePresensiIds.size;
-                      const isComplete = currentCount >= targetCount && targetCount > 0;
-                      
-                      return (
-                        <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/30 transition-colors">
-                          <div className="space-y-1 min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-medium text-foreground text-base">{namaKegiatan}</p>
-                              <Badge variant="secondary" className="font-normal">{jenisKegiatan}</Badge>
-                              {finished ? <Badge variant="destructive" className="text-xs">Selesai</Badge> : <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
-                            </div>
-                            <p className="text-sm text-muted-foreground">
-                              {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} WIB
-                            </p>
-                            <p className="text-sm">
-                              <span className="text-muted-foreground">Peserta: </span><span className="font-medium text-foreground/80">{audiensLabel}</span>
-                            </p>
-                          </div>
-                          
-                          <div className="flex gap-2 shrink-0 items-center">
-                            {finished && (
-                              isComplete ? (
-                                <Badge variant="success" className="h-9 px-3 text-sm flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
-                                  <CheckCircle2 className="h-4 w-4" /> Lengkap ({currentCount}/{targetCount})
-                                </Badge>
-                              ) : (
-                                <Button 
-                                  variant="outline"
-                                  size="sm" 
-                                  onClick={() => handleOpenMarkAlpha(j)}
-                                  disabled={checkingAlphaId === j.id}
-                                  className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"
-                                >
-                                  {checkingAlphaId === j.id ? (
-                                    <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Mengecek...</>
-                                  ) : (
-                                    <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha ({currentCount}/{targetCount})</>
-                                  )}
-                                </Button>
-                              )
-                            )}
-                            
-                            <div className="h-8 w-px bg-border mx-1 hidden md:block"></div>
-
-                            <Button variant="ghost" size="icon" onClick={() => openEditSesi(j)}><Pencil className="h-4 w-4 text-blue-600" /></Button>
-                            <Button variant="ghost" size="icon" onClick={() => deleteSesi(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                          </div>
+              </Card>
+            ) : (
+              currentGroupedSesi.map((group) => {
+                const isExpanded = expandedGroups.includes(group.id)
+                
+                return (
+                  <Card key={group.id} className="overflow-hidden border-border/60 shadow-sm hover:shadow-md transition-shadow">
+                    {/* Header Grup (Accordion Trigger) */}
+                    <div 
+                      className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${isExpanded ? 'bg-muted/30 border-b' : 'hover:bg-muted/30'}`}
+                      onClick={() => toggleGroup(group.id)}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`p-2 rounded-lg ${isExpanded ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                          <FolderOpen className="h-5 w-5" />
                         </div>
-                      )
-                    })}
-                  </div>
-                  
-                  {/* Paginasi Sesi */}
-                  {totalPagesSesi > 1 && (
-                    <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20">
-                      <span className="text-xs text-muted-foreground">
-                        Menampilkan {(pageSesi - 1) * ITEMS_PER_PAGE + 1} - {Math.min(pageSesi * ITEMS_PER_PAGE, filteredJadwals.length)} dari {filteredJadwals.length} jadwal
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="outline" size="icon" className="h-8 w-8"
-                          onClick={() => setPageSesi(p => Math.max(1, p - 1))}
-                          disabled={pageSesi === 1}
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <span className="text-xs font-medium px-2">Hal {pageSesi}</span>
-                        <Button
-                          variant="outline" size="icon" className="h-8 w-8"
-                          onClick={() => setPageSesi(p => Math.min(totalPagesSesi, p + 1))}
-                          disabled={pageSesi === totalPagesSesi}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-semibold text-base">{group.nama}</h4>
+                            <Badge variant="secondary" className="font-normal text-[10px] px-1.5 h-5">{group.jenis}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">{group.sesiList.length} sesi terjadwal dalam kegiatan ini</p>
+                        </div>
+                      </div>
+                      <div className="shrink-0 ml-4 text-muted-foreground">
+                        {isExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
                       </div>
                     </div>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
+
+                    {/* Isi Grup (List Jadwal) */}
+                    {isExpanded && (
+                      <div className="divide-y divide-border/50 bg-card">
+                        {group.sesiList.map((j: any) => {
+                          const finished = isJadwalFinished(j)
+                          const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
+
+                          // Kalkulator kelengkapan
+                          let targetMahasiswaIds: string[] = [];
+                          if (j.tipe_target === 'semua') targetMahasiswaIds = mahasiswaList.map(m => m.id);
+                          else if (j.tipe_target === 'unit') targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit).map(m => m.id);
+                          else if (j.tipe_target === 'unit_semester') targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit && m.semester?.toString() === j.target_audiens?.semester?.toString()).map(m => m.id);
+                          else if (j.tipe_target === 'custom') targetMahasiswaIds = j.target_audiens?.mahasiswa_ids || [];
+
+                          const targetCount = targetMahasiswaIds.length;
+                          const uniquePresensiIds = new Set((j.presensi || []).map((p: any) => p.mahasiswa_id));
+                          const currentCount = uniquePresensiIds.size;
+                          const isComplete = currentCount >= targetCount && targetCount > 0;
+                          
+                          return (
+                            <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/20 transition-colors pl-6 md:pl-16">
+                              <div className="space-y-1.5 min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                                    <CalendarDays className="h-4 w-4 text-primary/70" />
+                                    {formatDate(j.tanggal)}
+                                  </div>
+                                  <span className="text-muted-foreground text-sm">•</span>
+                                  <span className="text-sm">{j.jam_mulai.slice(0,5)} – {j.jam_selesai.slice(0,5)} WIB</span>
+                                  {finished ? <Badge variant="destructive" className="text-[10px] ml-1">Selesai</Badge> : <Badge variant="outline" className="text-[10px] ml-1 bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
+                                </div>
+                                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                                  <Users className="h-3.5 w-3.5" /> Target Peserta: <span className="font-medium text-foreground/80">{audiensLabel}</span>
+                                </p>
+                              </div>
+                              
+                              <div className="flex gap-2 shrink-0 items-center">
+                                {finished && (
+                                  isComplete ? (
+                                    <Badge variant="success" className="h-8 px-2.5 text-xs flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
+                                      <CheckCircle2 className="h-3.5 w-3.5" /> Presensi Lengkap ({currentCount}/{targetCount})
+                                    </Badge>
+                                  ) : (
+                                    <Button 
+                                      variant="outline"
+                                      size="sm" 
+                                      onClick={() => handleOpenMarkAlpha(j)}
+                                      disabled={checkingAlphaId === j.id}
+                                      className="h-8 text-xs border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"
+                                    >
+                                      {checkingAlphaId === j.id ? (
+                                        <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Mengecek...</>
+                                      ) : (
+                                        <><AlertCircle className="h-3.5 w-3.5 mr-1.5" /> Tandai Alpha ({currentCount}/{targetCount})</>
+                                      )}
+                                    </Button>
+                                  )
+                                )}
+                                
+                                <div className="h-6 w-px bg-border mx-1 hidden md:block"></div>
+
+                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditSesi(j)}><Pencil className="h-3.5 w-3.5 text-blue-600" /></Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => deleteSesi(j.id)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </Card>
+                )
+              })
+            )}
+
+            {/* Paginasi Sesi Berdasarkan Group */}
+            {totalPagesSesi > 1 && (
+              <div className="flex items-center justify-between px-2 pt-2">
+                <span className="text-xs text-muted-foreground">
+                  Menampilkan {(pageSesi - 1) * ITEMS_PER_PAGE + 1} - {Math.min(pageSesi * ITEMS_PER_PAGE, groupedArray.length)} dari {groupedArray.length} kelompok kegiatan
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline" size="icon" className="h-8 w-8"
+                    onClick={() => setPageSesi(p => Math.max(1, p - 1))}
+                    disabled={pageSesi === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs font-medium px-2">Hal {pageSesi}</span>
+                  <Button
+                    variant="outline" size="icon" className="h-8 w-8"
+                    onClick={() => setPageSesi(p => Math.min(totalPagesSesi, p + 1))}
+                    disabled={pageSesi === totalPagesSesi}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </TabsContent>
 
-        {/* TAB MASTER */}
+        {/* TAB MASTER (Tetap Seperti Sebelumnya, karena bentuknya tabel) */}
         <TabsContent value="master" className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
