@@ -16,7 +16,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, CalendarDays, Users, Search, CheckCircle2, Lock } from 'lucide-react'
+import { 
+  Plus, Pencil, Trash2, Loader2, AlertCircle, FolderOpen, 
+  CalendarDays, Users, Search, CheckCircle2, Lock, 
+  ChevronLeft, ChevronRight 
+} from 'lucide-react'
 import { formatDate, formatLabel } from '@/lib/utils'
 
 // --- SKEMA VALIDASI ZOD ---
@@ -67,6 +71,17 @@ export default function JadwalDanMasterPage() {
   const [markAlpaLoading, setMarkAlpaLoading] = useState(false)
   const [checkingAlphaId, setCheckingAlphaId] = useState<string | null>(null)
 
+  // --- STATE PAGINATION & SEARCH (UPGRADE) ---
+  const ITEMS_PER_PAGE = 10
+  
+  // State Sesi
+  const [searchSesi, setSearchSesi] = useState('')
+  const [pageSesi, setPageSesi] = useState(1)
+  
+  // State Master
+  const [searchMaster, setSearchMaster] = useState('')
+  const [pageMaster, setPageMaster] = useState(1)
+
   const formSesi = useForm<SesiFormData>({ 
     resolver: zodResolver(sesiFormSchema), 
     defaultValues: { tipe_target: 'semua', target_custom_ids: [] }
@@ -95,7 +110,6 @@ export default function JadwalDanMasterPage() {
     setLoading(true)
     const { data } = await supabase
       .from('sesi')
-      // PERBAIKAN: Menambahkan jenis_id di dalam nama_kegiatan agar bisa di-load saat edit
       .select('*, nama_kegiatan(id, nama_kegiatan, jenis_id, jenis_kegiatan(id, nama_jenis)), presensi(mahasiswa_id)')
       .order('tanggal', { ascending: false })
     
@@ -107,6 +121,10 @@ export default function JadwalDanMasterPage() {
     fetchMasterData()
     fetchJadwals() 
   }, [])
+
+  // Reset page ke 1 setiap kali search bar diketik
+  useEffect(() => { setPageSesi(1) }, [searchSesi])
+  useEffect(() => { setPageMaster(1) }, [searchMaster])
 
   const isJadwalFinished = (jadwal: any): boolean => {
     try {
@@ -122,6 +140,31 @@ export default function JadwalDanMasterPage() {
       return false 
     }
   }
+
+  // --- FILTER & PAGINATION LOGIC SESI ---
+  const filteredJadwals = jadwals.filter(j => {
+    if (!searchSesi) return true
+    const s = searchSesi.toLowerCase()
+    return (
+      j.nama_kegiatan?.nama_kegiatan?.toLowerCase().includes(s) ||
+      j.nama_kegiatan?.jenis_kegiatan?.nama_jenis?.toLowerCase().includes(s)
+    )
+  })
+  const totalPagesSesi = Math.ceil(filteredJadwals.length / ITEMS_PER_PAGE)
+  const currentDataSesi = filteredJadwals.slice((pageSesi - 1) * ITEMS_PER_PAGE, pageSesi * ITEMS_PER_PAGE)
+
+  // --- FILTER & PAGINATION LOGIC MASTER ---
+  const filteredMaster = masterKegiatan.filter(m => {
+    if (!searchMaster) return true
+    const s = searchMaster.toLowerCase()
+    return (
+      m.nama_kegiatan?.toLowerCase().includes(s) ||
+      m.jenis_kegiatan?.nama_jenis?.toLowerCase().includes(s)
+    )
+  })
+  const totalPagesMaster = Math.ceil(filteredMaster.length / ITEMS_PER_PAGE)
+  const currentDataMaster = filteredMaster.slice((pageMaster - 1) * ITEMS_PER_PAGE, pageMaster * ITEMS_PER_PAGE)
+
 
   const handleOpenMarkAlpha = async (jadwal: any) => {
     setCheckingAlphaId(jadwal.id)
@@ -216,7 +259,6 @@ export default function JadwalDanMasterPage() {
       }
 
       if (editingSesi) {
-        // Jika edit, HAPUS nama_kegiatan_id dari payload agar tidak mengubah master kegiatan aslinya untuk keamanan ekstra.
         delete (payload as any).nama_kegiatan_id
         const { error } = await supabase.from('sesi').update(payload).eq('id', editingSesi.id)
         if (error) throw error
@@ -265,7 +307,6 @@ export default function JadwalDanMasterPage() {
     }
 
     formSesi.reset({ 
-      // PERBAIKAN: Mengambil jenis_id dengan benar berkat query baru di fetchJadwals
       jenis_id: j.nama_kegiatan?.jenis_id || '',
       nama_kegiatan_id: j.nama_kegiatan_id || '', 
       tipe_target: j.tipe_target as any,
@@ -337,15 +378,28 @@ export default function JadwalDanMasterPage() {
           <TabsTrigger value="master">Master Kegiatan</TabsTrigger>
         </TabsList>
 
+        {/* TAB SESI */}
         <TabsContent value="sesi" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold">Daftar Sesi Kegiatan</h3>
               <p className="text-sm text-muted-foreground">Jadwal kegiatan yang sedang atau akan berlangsung.</p>
             </div>
-            <Button onClick={openCreateSesi} disabled={masterJenis.length === 0}>
-              <Plus className="mr-2 h-4 w-4" />Tambah Jadwal
-            </Button>
+            
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input 
+                  placeholder="Cari jadwal..." 
+                  className="pl-9 bg-background h-9 text-sm"
+                  value={searchSesi}
+                  onChange={(e) => setSearchSesi(e.target.value)}
+                />
+              </div>
+              <Button onClick={openCreateSesi} disabled={masterJenis.length === 0} className="w-full sm:w-auto h-9">
+                <Plus className="mr-2 h-4 w-4" />Tambah Jadwal
+              </Button>
+            </div>
           </div>
 
           <Card>
@@ -354,141 +408,203 @@ export default function JadwalDanMasterPage() {
                 <div className="space-y-3 p-4">
                   {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
                 </div>
-              ) : jadwals.length === 0 ? (
+              ) : currentDataSesi.length === 0 ? (
                 <div className="p-12 text-center text-muted-foreground flex flex-col items-center">
                   <CalendarDays className="h-10 w-10 opacity-20 mb-3" />
-                  <p>Belum ada sesi kegiatan terjadwal.</p>
+                  <p>Tidak ada jadwal yang ditemukan.</p>
                 </div>
               ) : (
-                <div className="divide-y">
-                  {jadwals.map(j => {
-                    const finished = isJadwalFinished(j)
-                    const namaKegiatan = j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui'
-                    const jenisKegiatan = j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-'
-                    const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
+                <>
+                  <div className="divide-y">
+                    {currentDataSesi.map(j => {
+                      const finished = isJadwalFinished(j)
+                      const namaKegiatan = j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui'
+                      const jenisKegiatan = j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-'
+                      const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
 
-                    // --- KALKULATOR KELENGKAPAN PRESENSI ---
-                    let targetMahasiswaIds: string[] = [];
-                    if (j.tipe_target === 'semua') {
-                        targetMahasiswaIds = mahasiswaList.map(m => m.id);
-                    } else if (j.tipe_target === 'unit') {
-                        targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit).map(m => m.id);
-                    } else if (j.tipe_target === 'unit_semester') {
-                        targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit && m.semester?.toString() === j.target_audiens?.semester?.toString()).map(m => m.id);
-                    } else if (j.tipe_target === 'custom') {
-                        targetMahasiswaIds = j.target_audiens?.mahasiswa_ids || [];
-                    }
+                      // Kalkulator kelengkapan
+                      let targetMahasiswaIds: string[] = [];
+                      if (j.tipe_target === 'semua') targetMahasiswaIds = mahasiswaList.map(m => m.id);
+                      else if (j.tipe_target === 'unit') targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit).map(m => m.id);
+                      else if (j.tipe_target === 'unit_semester') targetMahasiswaIds = mahasiswaList.filter(m => m.unit === j.target_audiens?.unit && m.semester?.toString() === j.target_audiens?.semester?.toString()).map(m => m.id);
+                      else if (j.tipe_target === 'custom') targetMahasiswaIds = j.target_audiens?.mahasiswa_ids || [];
 
-                    const targetCount = targetMahasiswaIds.length;
-                    const uniquePresensiIds = new Set((j.presensi || []).map((p: any) => p.mahasiswa_id));
-                    const currentCount = uniquePresensiIds.size;
-                    
-                    const isComplete = currentCount >= targetCount && targetCount > 0;
-                    
-                    return (
-                      <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/30 transition-colors">
-                        <div className="space-y-1 min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium text-foreground text-base">{namaKegiatan}</p>
-                            <Badge variant="secondary" className="font-normal">{jenisKegiatan}</Badge>
-                            {finished ? <Badge variant="destructive" className="text-xs">Selesai</Badge> : <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
+                      const targetCount = targetMahasiswaIds.length;
+                      const uniquePresensiIds = new Set((j.presensi || []).map((p: any) => p.mahasiswa_id));
+                      const currentCount = uniquePresensiIds.size;
+                      const isComplete = currentCount >= targetCount && targetCount > 0;
+                      
+                      return (
+                        <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/30 transition-colors">
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-medium text-foreground text-base">{namaKegiatan}</p>
+                              <Badge variant="secondary" className="font-normal">{jenisKegiatan}</Badge>
+                              {finished ? <Badge variant="destructive" className="text-xs">Selesai</Badge> : <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} WIB
+                            </p>
+                            <p className="text-sm">
+                              <span className="text-muted-foreground">Peserta: </span><span className="font-medium text-foreground/80">{audiensLabel}</span>
+                            </p>
                           </div>
-                          <p className="text-sm text-muted-foreground">
-                            {formatDate(j.tanggal)} · {j.jam_mulai.slice(0,5)}–{j.jam_selesai.slice(0,5)} WIB
-                          </p>
-                          <p className="text-sm">
-                            <span className="text-muted-foreground">Peserta: </span><span className="font-medium text-foreground/80">{audiensLabel}</span>
-                          </p>
-                        </div>
-                        
-                        <div className="flex gap-2 shrink-0 items-center">
-                          {finished && (
-                            isComplete ? (
-                              <Badge variant="success" className="h-9 px-3 text-sm flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
-                                <CheckCircle2 className="h-4 w-4" /> Lengkap ({currentCount}/{targetCount})
-                              </Badge>
-                            ) : (
-                              <Button 
-                                variant="outline"
-                                size="sm" 
-                                onClick={() => handleOpenMarkAlpha(j)}
-                                disabled={checkingAlphaId === j.id}
-                                className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"
-                              >
-                                {checkingAlphaId === j.id ? (
-                                  <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Mengecek...</>
-                                ) : (
-                                  <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha ({currentCount}/{targetCount})</>
-                                )}
-                              </Button>
-                            )
-                          )}
                           
-                          <div className="h-8 w-px bg-border mx-1 hidden md:block"></div>
+                          <div className="flex gap-2 shrink-0 items-center">
+                            {finished && (
+                              isComplete ? (
+                                <Badge variant="success" className="h-9 px-3 text-sm flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
+                                  <CheckCircle2 className="h-4 w-4" /> Lengkap ({currentCount}/{targetCount})
+                                </Badge>
+                              ) : (
+                                <Button 
+                                  variant="outline"
+                                  size="sm" 
+                                  onClick={() => handleOpenMarkAlpha(j)}
+                                  disabled={checkingAlphaId === j.id}
+                                  className="border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800"
+                                >
+                                  {checkingAlphaId === j.id ? (
+                                    <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Mengecek...</>
+                                  ) : (
+                                    <><AlertCircle className="h-4 w-4 mr-1.5" /> Tandai Alpha ({currentCount}/{targetCount})</>
+                                  )}
+                                </Button>
+                              )
+                            )}
+                            
+                            <div className="h-8 w-px bg-border mx-1 hidden md:block"></div>
 
-                          <Button variant="ghost" size="icon" onClick={() => openEditSesi(j)}><Pencil className="h-4 w-4 text-blue-600" /></Button>
-                          <Button variant="ghost" size="icon" onClick={() => deleteSesi(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => openEditSesi(j)}><Pencil className="h-4 w-4 text-blue-600" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => deleteSesi(j.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                          </div>
                         </div>
+                      )
+                    })}
+                  </div>
+                  
+                  {/* Paginasi Sesi */}
+                  {totalPagesSesi > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20">
+                      <span className="text-xs text-muted-foreground">
+                        Menampilkan {(pageSesi - 1) * ITEMS_PER_PAGE + 1} - {Math.min(pageSesi * ITEMS_PER_PAGE, filteredJadwals.length)} dari {filteredJadwals.length} jadwal
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline" size="icon" className="h-8 w-8"
+                          onClick={() => setPageSesi(p => Math.max(1, p - 1))}
+                          disabled={pageSesi === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-xs font-medium px-2">Hal {pageSesi}</span>
+                        <Button
+                          variant="outline" size="icon" className="h-8 w-8"
+                          onClick={() => setPageSesi(p => Math.min(totalPagesSesi, p + 1))}
+                          disabled={pageSesi === totalPagesSesi}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
                       </div>
-                    )
-                  })}
-                </div>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* TAB MASTER */}
         <TabsContent value="master" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold">Katalog Master Kegiatan</h3>
               <p className="text-sm text-muted-foreground">Tambahkan nama acara atau rutinan asrama di sini.</p>
             </div>
-            <Button onClick={openCreateMaster} variant="secondary" className="border">
-              <Plus className="mr-2 h-4 w-4" />Tambah Master Baru
-            </Button>
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input 
+                  placeholder="Cari kegiatan..." 
+                  className="pl-9 bg-background h-9 text-sm"
+                  value={searchMaster}
+                  onChange={(e) => setSearchMaster(e.target.value)}
+                />
+              </div>
+              <Button onClick={openCreateMaster} variant="secondary" className="border w-full sm:w-auto h-9">
+                <Plus className="mr-2 h-4 w-4" />Tambah Master Baru
+              </Button>
+            </div>
           </div>
 
           <Card>
             <CardContent className="p-0">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-muted/50 text-muted-foreground border-b">
-                  <tr>
-                    <th className="px-4 py-3 font-medium w-16 text-center">No</th>
-                    <th className="px-4 py-3 font-medium">Nama Kegiatan</th>
-                    <th className="px-4 py-3 font-medium w-48">Kategori</th>
-                    <th className="px-4 py-3 font-medium text-right w-28">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {masterKegiatan.length > 0 ? (
-                    masterKegiatan.map((item: any, index: number) => (
-                      <tr key={item.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-3 text-center text-muted-foreground">{index + 1}</td>
-                        <td className="px-4 py-3 font-medium text-foreground">{item.nama_kegiatan}</td>
-                        <td className="px-4 py-3">
-                          <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold bg-amber-50 text-amber-700 border-amber-200">
-                            {item.jenis_kegiatan?.nama_jenis || '-'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button onClick={() => openEditMaster(item)} className="text-blue-600 hover:underline text-xs font-medium mr-3">Edit</button>
-                          <button onClick={() => deleteMaster(item.id)} className="text-destructive hover:underline text-xs font-medium">Hapus</button>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-muted/50 text-muted-foreground border-b">
+                    <tr>
+                      <th className="px-4 py-3 font-medium w-16 text-center">No</th>
+                      <th className="px-4 py-3 font-medium">Nama Kegiatan</th>
+                      <th className="px-4 py-3 font-medium w-48">Kategori</th>
+                      <th className="px-4 py-3 font-medium text-right w-28">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {currentDataMaster.length > 0 ? (
+                      currentDataMaster.map((item: any, index: number) => (
+                        <tr key={item.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="px-4 py-3 text-center text-muted-foreground">{(pageMaster - 1) * ITEMS_PER_PAGE + index + 1}</td>
+                          <td className="px-4 py-3 font-medium text-foreground">{item.nama_kegiatan}</td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold bg-amber-50 text-amber-700 border-amber-200">
+                              {item.jenis_kegiatan?.nama_jenis || '-'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button onClick={() => openEditMaster(item)} className="text-blue-600 hover:underline text-xs font-medium mr-3">Edit</button>
+                            <button onClick={() => deleteMaster(item.id)} className="text-destructive hover:underline text-xs font-medium">Hapus</button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-12 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center">
+                            <FolderOpen className="h-10 w-10 opacity-20 mb-3" />
+                            <p>Tidak ada data master ditemukan.</p>
+                          </div>
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-12 text-center text-muted-foreground">
-                        <div className="flex flex-col items-center justify-center">
-                          <FolderOpen className="h-10 w-10 opacity-20 mb-3" />
-                          <p>Belum ada master data kegiatan.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Paginasi Master */}
+              {totalPagesMaster > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20">
+                  <span className="text-xs text-muted-foreground">
+                    Menampilkan {(pageMaster - 1) * ITEMS_PER_PAGE + 1} - {Math.min(pageMaster * ITEMS_PER_PAGE, filteredMaster.length)} dari {filteredMaster.length} data
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline" size="icon" className="h-8 w-8"
+                      onClick={() => setPageMaster(p => Math.max(1, p - 1))}
+                      disabled={pageMaster === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-xs font-medium px-2">Hal {pageMaster}</span>
+                    <Button
+                      variant="outline" size="icon" className="h-8 w-8"
+                      onClick={() => setPageMaster(p => Math.min(totalPagesMaster, p + 1))}
+                      disabled={pageMaster === totalPagesMaster}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -515,14 +631,13 @@ export default function JadwalDanMasterPage() {
               <div className="space-y-2">
                 <Label className="flex items-center justify-between">
                   Jenis Kegiatan
-                  {/* PERBAIKAN: Tampilkan icon gembok jika sedang edit */}
                   {editingSesi && <Lock className="h-3 w-3 text-muted-foreground" />}
                 </Label>
                 <Controller control={formSesi.control} name="jenis_id" render={({ field }) => (
                   <Select 
                     onValueChange={(val) => { field.onChange(val); formSesi.setValue('nama_kegiatan_id', '') }} 
                     value={field.value}
-                    disabled={!!editingSesi} // PERBAIKAN: Dikunci jika edit
+                    disabled={!!editingSesi}
                   >
                     <SelectTrigger className={`bg-background ${formSesi.formState.errors.jenis_id ? "border-red-500" : ""} disabled:opacity-70 disabled:bg-muted`}>
                       <SelectValue placeholder="Pilih jenis..." />
@@ -534,14 +649,13 @@ export default function JadwalDanMasterPage() {
               <div className="space-y-2">
                 <Label className="flex items-center justify-between">
                   Nama Kegiatan
-                  {/* PERBAIKAN: Tampilkan icon gembok jika sedang edit */}
                   {editingSesi && <Lock className="h-3 w-3 text-muted-foreground" />}
                 </Label>
                 <Controller control={formSesi.control} name="nama_kegiatan_id" render={({ field }) => (
                   <Select 
                     onValueChange={field.onChange} 
                     value={field.value} 
-                    disabled={!!editingSesi || !watchedJenisId} // PERBAIKAN: Dikunci jika edit
+                    disabled={!!editingSesi || !watchedJenisId}
                   >
                     <SelectTrigger className={`bg-background ${formSesi.formState.errors.nama_kegiatan_id ? "border-red-500" : ""} disabled:opacity-70 disabled:bg-muted`}>
                       <SelectValue placeholder="Pilih kegiatan..." />
