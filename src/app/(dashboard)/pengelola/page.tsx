@@ -3,8 +3,13 @@ import { createClient } from '@/lib/supabase/server'
 import { StatCard } from '@/components/shared/stat-card'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users, Calendar, CheckSquare, CreditCard, ArrowRight } from 'lucide-react'
-import { formatDate, formatCurrency, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { 
+  Users, Calendar, CheckSquare, CreditCard, ArrowRight, Plus, 
+  AlertTriangle, Clock, CheckCircle2, ShieldAlert, Wallet, TrendingUp 
+} from 'lucide-react'
+import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
 import Link from 'next/link'
 
 export default async function PengelolaDashboard() {
@@ -15,41 +20,48 @@ export default async function PengelolaDashboard() {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (profile?.role !== 'pengelola') redirect(`/${profile?.role ?? 'login'}`)
 
-  // Dapatkan tanggal hari ini format YYYY-MM-DD sesuai WIB (Asia/Jakarta)
+  // Tanggal hari ini format YYYY-MM-DD (Asia/Jakarta)
   const todayWIB = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
 
-  // Mengambil total perhitungan stat card secara parallel
+  // 1. Fetching Perhitungan Stat Card Utama & Data Hari Ini
   const [
     { count: totalMahasiswa }, 
-    { count: totalJadwal }, 
+    { count: totalJadwalToday }, 
     { count: pendingIzinSesi }, 
     { count: pendingIzinPulang }, 
-    { count: pendingSpp }
+    { count: pendingSpp },
+    { data: sesiToday },
+    { data: recentIzinSesiData },
+    { data: recentIzinPulangData },
+    { data: recentSpp },
+    { data: allPresensi }
   ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'mahasiswa').eq('is_active', true),
     supabase.from('sesi').select('*', { count: 'exact', head: true }).eq('tanggal', todayWIB),
     supabase.from('izin_sesi').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('izin_pulang').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('tagihan_spp').select('*', { count: 'exact', head: true }).eq('status', 'menunggu_verifikasi'),
+    
+    // Sesi hari ini lengkap dengan presensi yang sudah masuk
+    supabase.from('sesi')
+      .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis)), presensi(id, status)')
+      .eq('tanggal', todayWIB)
+      .order('jam_mulai', { ascending: true }),
+
+    // Data Perizinan Pending Terbaru
+    supabase.from('izin_sesi').select('*, profiles(nama, nim, unit)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
+    supabase.from('izin_pulang').select('*, profiles(nama, nim, unit)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
+    
+    // Tagihan SPP Menunggu Verifikasi
+    supabase.from('tagihan_spp').select('*, profiles(nama, nim, unit), master_tarif(nominal, master_periode(nama_periode))').eq('status', 'menunggu_verifikasi').order('created_at', { ascending: false }).limit(5),
+    
+    // Semua Rekap Presensi untuk Analitik Kehadiran & Warning System
+    supabase.from('presensi').select('status, mahasiswa_id, profiles(nama, nim, unit), sesi(nama_kegiatan(nama_kegiatan))')
   ])
 
   const pendingIzinTotal = (pendingIzinSesi ?? 0) + (pendingIzinPulang ?? 0)
 
-  // Mengambil data perizinan terbaru (gabungan dari izin sesi dan izin pulang)
-  const [
-    { data: recentIzinSesiData },
-    { data: recentIzinPulangData },
-    { data: recentSpp },
-    { data: allPresensi }
-  ] = await Promise.all([
-    supabase.from('izin_sesi').select('*, profiles(nama, nim)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
-    supabase.from('izin_pulang').select('*, profiles(nama, nim)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
-    supabase.from('tagihan_spp').select('*, profiles(nama, nim), master_tarif(nominal)').eq('status', 'menunggu_verifikasi').order('created_at', { ascending: false }).limit(5),
-    // PERBAIKAN RELASI: Mengambil nama kegiatan melalui relasi tabel sesi -> nama_kegiatan
-    supabase.from('presensi').select('status, sesi(nama_kegiatan(nama_kegiatan))')
-  ])
-
-  // Menggabungkan dan mengurutkan perizinan berdasarkan yang terbaru
+  // Gabungkan Perizinan Terbaru
   const recentIzin = [
     ...(recentIzinSesiData || []).map(i => ({ ...i, type: 'Sesi', alasan: i.alasan_izin })),
     ...(recentIzinPulangData || []).map(i => ({ ...i, type: 'Pulang', alasan: i.keterangan }))
@@ -57,27 +69,77 @@ export default async function PengelolaDashboard() {
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 5)
 
-  // Hitung rata-rata kehadiran per kegiatan
+  // 2. Kalkulasi Analitik Kehadiran Per Kegiatan & Per Mahasiswa (Untuk Risk Warning)
   const activityStats: Record<string, { nama: string; hadir: number; izin: number; alpha: number }> = {}
+  const studentStats: Record<string, { nama: string; nim: string; unit: string; hadir: number; izin: number; alpha: number }> = {}
+
   ;(allPresensi ?? []).forEach((p: any) => {
-    // Menyesuaikan dengan struktur nested join Supabase
-    const nama = p.sesi?.nama_kegiatan?.nama_kegiatan ?? 'Kegiatan Lainnya'
-    if (!activityStats[nama]) activityStats[nama] = { nama, hadir: 0, izin: 0, alpha: 0 }
+    // Stat Kegiatan
+    const namaKegiatan = p.sesi?.nama_kegiatan?.nama_kegiatan ?? 'Kegiatan Lainnya'
+    if (!activityStats[namaKegiatan]) activityStats[namaKegiatan] = { nama: namaKegiatan, hadir: 0, izin: 0, alpha: 0 }
     
-    if (p.status === 'hadir') activityStats[nama].hadir++
-    else if (p.status === 'izin') activityStats[nama].izin++
-    else activityStats[nama].alpha++
+    if (p.status === 'hadir') activityStats[namaKegiatan].hadir++
+    else if (p.status === 'izin') activityStats[namaKegiatan].izin++
+    else activityStats[namaKegiatan].alpha++
+
+    // Stat Mahasiswa (Mencari mahasiswa yang presensinya buruk)
+    if (p.mahasiswa_id && p.profiles) {
+      const mId = p.mahasiswa_id
+      if (!studentStats[mId]) {
+        studentStats[mId] = { 
+          nama: p.profiles.nama, 
+          nim: p.profiles.nim, 
+          unit: p.profiles.unit, 
+          hadir: 0, izin: 0, alpha: 0 
+        }
+      }
+      if (p.status === 'hadir') studentStats[mId].hadir++
+      else if (p.status === 'izin') studentStats[mId].izin++
+      else studentStats[mId].alpha++
+    }
   })
+
   const activityList = Object.values(activityStats)
+  
+  // Filter Mahasiswa Berisiko (Persentase < 70% dan total jadwal > 3)
+  const riskyStudents = Object.values(studentStats)
+    .map(s => {
+      const total = s.hadir + s.izin + s.alpha
+      const pct = calcAttendancePercentage(s.hadir, s.izin, s.alpha)
+      return { ...s, total, pct }
+    })
+    .filter(s => s.total >= 3 && s.pct < 70)
+    .sort((a, b) => a.pct - b.pct)
+    .slice(0, 4)
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <PageHeader
-        title="Dashboard Pengelola"
-        description={`Hari ini ${formatDate(new Date())}`}
-      />
+    <div className="space-y-6 animate-fade-in pb-10">
+      {/* Header + Quick Actions */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <PageHeader
+          title="Dashboard Pengelola"
+          description={`Ringkasan operasional asrama hari ini · ${formatDate(new Date())}`}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm" className="gap-1.5 shadow-sm">
+            <Link href="/admin/jadwal">
+              <Plus className="h-4 w-4" /> Tambah Sesi
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm" className="gap-1.5 bg-background">
+            <Link href="/pengelola/perizinan">
+              <CheckSquare className="h-4 w-4 text-amber-600" /> Review Izin ({pendingIzinTotal})
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm" className="gap-1.5 bg-background">
+            <Link href="/pengelola/keuangan">
+              <CreditCard className="h-4 w-4 text-purple-600" /> SPP ({pendingSpp})
+            </Link>
+          </Button>
+        </div>
+      </div>
 
-      {/* Stats Grid */}
+      {/* Grid Status Utama */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           title="Mahasiswa Aktif"
@@ -87,7 +149,7 @@ export default async function PengelolaDashboard() {
         />
         <StatCard
           title="Sesi Hari Ini"
-          value={totalJadwal ?? 0}
+          value={totalJadwalToday ?? 0}
           icon={Calendar}
           iconClassName="bg-blue-100 [&_svg]:text-blue-600"
         />
@@ -105,32 +167,246 @@ export default async function PengelolaDashboard() {
         />
       </div>
 
-      {/* Average Attendance per Activity */}
-      {activityList.length > 0 && (
-        <Card className="border border-border/60 shadow-sm">
-          <CardHeader className="pb-3">
+      {/* ROW 2: Sesi Hari Ini & Review Pending */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        
+        {/* Jadwal Sesi Hari Ini */}
+        <Card className="border border-border/60 shadow-sm flex flex-col">
+          <CardHeader className="pb-3 border-b bg-muted/20">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-semibold">Rata-rata Kehadiran per Kegiatan</CardTitle>
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-blue-600" />
+                <CardTitle className="text-base font-semibold">Jadwal Sesi Hari Ini</CardTitle>
+              </div>
+              <Badge variant="secondary" className="font-normal">{sesiToday?.length || 0} Kegiatan</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 flex-1">
+            {sesiToday && sesiToday.length > 0 ? (
+              <div className="space-y-3">
+                {sesiToday.map((sesi: any) => {
+                  const presensiCount = sesi.presensi?.length || 0
+                  return (
+                    <div 
+                      key={sesi.id} 
+                      className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="space-y-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-sm text-foreground truncate">
+                            {sesi.nama_kegiatan?.nama_kegiatan}
+                          </p>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                            {sesi.nama_kegiatan?.jenis_kegiatan?.nama_jenis}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                          <span>{sesi.jam_mulai.slice(0,5)}–{sesi.jam_selesai.slice(0,5)} WIB</span>
+                          <span>•</span>
+                          <span className="capitalize">Target: {formatLabel(sesi.tipe_target)}</span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            {presensiCount} Masuk
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
+                <Calendar className="h-10 w-10 opacity-20 mb-2" />
+                <p className="text-sm font-medium">Tidak ada kegiatan terjadwal hari ini</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Nikmati hari libur atau buat agenda baru.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Perizinan Menunggu Review */}
+        <Card className="border border-border/60 shadow-sm flex flex-col">
+          <CardHeader className="pb-3 border-b bg-muted/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckSquare className="h-4 w-4 text-amber-600" />
+                <CardTitle className="text-base font-semibold">Izin Menunggu Approval</CardTitle>
+              </div>
               <Link
-                href="/pengelola/laporan"
+                href="/pengelola/perizinan"
                 className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
               >
-                Lihat laporan <ArrowRight className="h-3 w-3" />
+                Lihat semua <ArrowRight className="h-3 w-3" />
               </Link>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
+          <CardContent className="p-4 flex-1">
+            {recentIzin.length > 0 ? (
+              <div className="space-y-2.5">
+                {recentIzin.map((izin) => {
+                  const p = izin.profiles as { nama: string; nim: string; unit: string } | null
+                  return (
+                    <div
+                      key={izin.id}
+                      className="flex items-center justify-between rounded-lg border p-3 bg-card hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate font-semibold text-sm text-foreground">{p?.nama ?? '-'}</p>
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                            {formatLabel(p?.unit)}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                          <span className="font-medium text-amber-700">Izin {izin.type}</span>: &quot;{izin.alasan}&quot;
+                        </p>
+                      </div>
+                      <Link 
+                        href="/pengelola/perizinan" 
+                        className="shrink-0 text-xs bg-amber-50 text-amber-700 font-medium px-2.5 py-1 rounded-md border border-amber-200 hover:bg-amber-100 transition-colors"
+                      >
+                        Review
+                      </Link>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
+                <CheckCircle2 className="h-10 w-10 opacity-20 text-emerald-600 mb-2" />
+                <p className="text-sm font-medium">Semua Izin Telah Diproses</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Tidak ada pengajuan izin yang tertunda.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* ROW 3: Mahasiswa Perlu Perhatian (Warning) & Verifikasi SPP */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+
+        {/* System Warning: Mahasiswa Kehadiran Rendah */}
+        <Card className="border border-red-100 bg-red-50/10 shadow-sm">
+          <CardHeader className="pb-3 border-b border-red-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-red-600" />
+                <CardTitle className="text-base font-semibold text-red-900">Perhatian: Kehadiran Rendah (&lt;70%)</CardTitle>
+              </div>
+              <Badge variant="destructive" className="text-[10px]">
+                {riskyStudents.length} Mahasiswa
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            {riskyStudents.length > 0 ? (
+              <div className="space-y-2.5">
+                {riskyStudents.map((s, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg border border-red-200 bg-background">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm text-foreground truncate">{s.nama}</p>
+                      <p className="text-xs text-muted-foreground">{s.nim} · {formatLabel(s.unit)}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full border border-red-200">
+                        {s.pct.toFixed(1)}% Kehadiran
+                      </span>
+                      <p className="text-[10px] text-muted-foreground mt-1">{s.alpha}x Alpha dari {s.total} Sesi</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-6 text-center text-muted-foreground">
+                <CheckCircle2 className="mx-auto h-8 w-8 text-green-500 opacity-40 mb-1" />
+                <p className="text-xs font-medium">Kedisiplinan Mahasiswa Baik</p>
+                <p className="text-[11px] text-muted-foreground">Tidak ada mahasiswa dengan persentase kehadiran kritis.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Verifikasi SPP Menunggu */}
+        <Card className="border border-border/60 shadow-sm">
+          <CardHeader className="pb-3 border-b bg-muted/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Wallet className="h-4 w-4 text-purple-600" />
+                <CardTitle className="text-base font-semibold">Verifikasi Pembayaran SPP</CardTitle>
+              </div>
+              <Link href="/pengelola/keuangan" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                Kelola SPP <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            {recentSpp && recentSpp.length > 0 ? (
+              <div className="space-y-2.5">
+                {recentSpp.map((spp: any) => {
+                  const p = spp.profiles as { nama: string; nim: string } | null
+                  const nominal = spp.master_tarif?.nominal ?? 0
+                  const periode = spp.master_tarif?.master_periode?.nama_periode ?? '-'
+                  return (
+                    <div
+                      key={spp.id}
+                      className="flex items-center justify-between rounded-lg border p-2.5 bg-card hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-sm text-foreground">{p?.nama ?? '-'}</p>
+                        <p className="text-xs text-muted-foreground">{p?.nim} · Periode {periode}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-xs font-bold text-purple-700">{formatCurrency(nominal)}</p>
+                        <span className="inline-block mt-0.5 text-[10px] font-medium bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-200">
+                          Menunggu Verifikasi
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="py-6 text-center text-muted-foreground">
+                <CreditCard className="mx-auto h-8 w-8 opacity-20 mb-1" />
+                <p className="text-xs font-medium">Tidak ada antrean verifikasi SPP</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* ROW 4: Rekap Rata-rata Kehadiran Per Kegiatan */}
+      {activityList.length > 0 && (
+        <Card className="border border-border/60 shadow-sm">
+          <CardHeader className="pb-3 border-b bg-muted/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-emerald-600" />
+                <CardTitle className="text-base font-semibold">Tingkat Kehadiran per Jenis Kegiatan</CardTitle>
+              </div>
+              <Link href="/pengelola/laporan" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                Laporan Lengkap <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {activityList.map((act) => {
                 const total = act.hadir + act.izin + act.alpha
                 const pct = calcAttendancePercentage(act.hadir, act.izin, act.alpha)
                 return (
-                  <div key={act.nama} className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium truncate">{act.nama}</span>
-                      <div className="flex items-center gap-2 shrink-0 ml-2">
-                        <span className="text-xs text-muted-foreground">{act.hadir}/{total} hadir</span>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${getAttendanceBgColor(pct)}`}>
+                  <div key={act.nama} className="space-y-1.5 p-3 rounded-lg border bg-card">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-sm truncate">{act.nama}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-muted-foreground">{act.hadir}/{total} Hadir</span>
+                        <span className={`rounded-full px-2 py-0.5 font-bold ${getAttendanceBgColor(pct)}`}>
                           {pct.toFixed(1)}%
                         </span>
                       </div>
@@ -149,107 +425,8 @@ export default async function PengelolaDashboard() {
         </Card>
       )}
 
-      {/* Recent Perizinan */}
-      <Card className="border border-border/60 shadow-sm">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-semibold">Perizinan Menunggu Persetujuan</CardTitle>
-            <Link
-              href="/pengelola/perizinan"
-              className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-            >
-              Lihat semua <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {pendingIzinTotal > 0 && recentIzin.length === 0 ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <div>
-                  <p className="font-semibold text-sm text-amber-800">{pendingIzinTotal} perizinan menunggu persetujuan</p>
-                  <p className="text-xs text-amber-600">Klik &quot;Lihat semua&quot; untuk mereview</p>
-                </div>
-                <Link href="/pengelola/perizinan" className="shrink-0 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 border border-amber-200 hover:bg-amber-200 transition-colors">
-                  Review
-                </Link>
-              </div>
-            </div>
-          ) : recentIzin.length > 0 ? (
-            <div className="space-y-2">
-              {recentIzin.map((izin) => {
-                const p = izin.profiles as { nama: string; nim: string } | null
-                return (
-                  <div
-                    key={izin.id}
-                    className="flex items-center justify-between rounded-xl border border-border/60 bg-background p-3 transition-colors hover:bg-muted/30"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold text-sm text-foreground">{p?.nama ?? '-'}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {p?.nim} · <span className="font-medium">Izin {izin.type}</span>: {izin.alasan}
-                      </p>
-                    </div>
-                    <span className="ml-3 shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
-                      Pending
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="py-8 text-center">
-              <CheckSquare className="mx-auto h-10 w-10 text-muted-foreground/30 mb-2" />
-              <p className="text-sm text-muted-foreground">Tidak ada perizinan menunggu.</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Recent SPP Menunggu Verifikasi */}
-      <Card className="border border-border/60 shadow-sm">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-semibold">Pembayaran SPP Menunggu Verifikasi</CardTitle>
-            <Link
-              href="/pengelola/keuangan"
-              className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-            >
-              Lihat semua <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {recentSpp && recentSpp.length > 0 ? (
-            <div className="space-y-2">
-              {recentSpp.map((spp: any) => {
-                const p = spp.profiles as { nama: string; nim: string } | null
-                const nominal = spp.master_tarif?.nominal ?? 0
-                return (
-                  <div
-                    key={spp.id}
-                    className="flex items-center justify-between rounded-xl border border-border/60 bg-background p-3 transition-colors hover:bg-muted/30"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold text-sm text-foreground">{p?.nama ?? '-'}</p>
-                      <p className="text-xs text-muted-foreground">{p?.nim} · {formatCurrency(nominal)}</p>
-                    </div>
-                    <span className="ml-3 shrink-0 rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700 border border-purple-200">
-                      Menunggu
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="py-8 text-center">
-              <CreditCard className="mx-auto h-10 w-10 text-muted-foreground/30 mb-2" />
-              <p className="text-sm text-muted-foreground">Tidak ada pembayaran menunggu verifikasi.</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   )
 }
+
 export const dynamic = 'force-dynamic'
