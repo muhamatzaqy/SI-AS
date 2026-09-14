@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 
 // UBAH IMPORT INI: Ambil langsung dari 'sonner'
 import { Toaster } from 'sonner'
+import { Analytics } from '@vercel/analytics/next'
 
 const geistSans = GeistSans;
 const geistMono = GeistMono;
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         
         {/* WADAH TOAST DIUBAH KE SONNER */}
         <Toaster position="top-center" richColors />
+        <Analytics />
         
       </body>
     </html>
