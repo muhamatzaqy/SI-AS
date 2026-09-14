@@ -3,6 +3,7 @@ import './globals.css'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { cn } from "@/lib/utils"
+import { Analytics } from '@vercel/analytics/next'
 
 // UBAH IMPORT INI: Ambil langsung dari 'sonner'
 import { Toaster } from 'sonner'
@@ -29,6 +30,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         
         {/* WADAH TOAST DIUBAH KE SONNER */}
         <Toaster position="top-center" richColors />
+        
+        {/* Vercel Web Analytics */}
+        <Analytics />
         
       </body>
     </html>
