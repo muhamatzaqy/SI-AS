@@ -47,7 +47,7 @@ const masterFormSchema = z.object({
 })
 type MasterFormData = z.infer<typeof masterFormSchema>
 
-// --- TYPE UNTUK GROUPING (Memperbaiki error TypeScript) ---
+// --- TYPE UNTUK GROUPING (Pencegah error TypeScript) ---
 type GroupedData = {
   id: string;
   nama: string;
@@ -176,8 +176,8 @@ export default function JadwalDanMasterPage() {
     return acc
   }, {} as Record<string, GroupedData>)
 
-  // 3. Ubah object jadi array dan urutkan berdasarkan nama (Alphabetical)
-  const groupedArray = Object.values(groupedJadwals).sort((a, b) => a.nama.localeCompare(b.nama))
+  // 3. Ubah object jadi array dan urutkan berdasarkan nama (Alphabetical) dengan Casting EXPLISIT (as GroupedData[])
+  const groupedArray = (Object.values(groupedJadwals) as GroupedData[]).sort((a, b) => a.nama.localeCompare(b.nama))
   
   // 4. Pagination dilakukan pada level GRUP (bukan level sesi individu)
   const totalPagesSesi = Math.ceil(groupedArray.length / ITEMS_PER_PAGE)
