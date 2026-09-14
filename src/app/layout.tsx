@@ -4,6 +4,7 @@ import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { cn } from "@/lib/utils"
 import { Analytics } from '@vercel/analytics/next'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 
 // UBAH IMPORT INI: Ambil langsung dari 'sonner'
 import { Toaster } from 'sonner'
@@ -33,6 +34,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         
         {/* Vercel Web Analytics */}
         <Analytics />
+        
+        {/* Vercel Speed Insights */}
+        <SpeedInsights />
         
       </body>
     </html>
