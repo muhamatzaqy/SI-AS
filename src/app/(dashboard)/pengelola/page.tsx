@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { 
   Users, Calendar, CheckSquare, CreditCard, ArrowRight, Plus, 
-  AlertTriangle, Clock, CheckCircle2, ShieldAlert, Wallet, TrendingUp 
+  Clock, CheckCircle2, ShieldAlert, Wallet, TrendingUp 
 } from 'lucide-react'
 import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
 import Link from 'next/link'
@@ -121,21 +121,23 @@ export default async function PengelolaDashboard() {
           description={`Ringkasan operasional asrama hari ini · ${formatDate(new Date())}`}
         />
         <div className="flex flex-wrap items-center gap-2">
-          <Button asChild size="sm" className="gap-1.5 shadow-sm">
-            <Link href="/admin/jadwal">
+          <Link href="/admin/jadwal">
+            <Button size="sm" className="gap-1.5 shadow-sm">
               <Plus className="h-4 w-4" /> Tambah Sesi
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm" className="gap-1.5 bg-background">
-            <Link href="/pengelola/perizinan">
+            </Button>
+          </Link>
+          
+          <Link href="/pengelola/perizinan">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-background">
               <CheckSquare className="h-4 w-4 text-amber-600" /> Review Izin ({pendingIzinTotal})
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm" className="gap-1.5 bg-background">
-            <Link href="/pengelola/keuangan">
+            </Button>
+          </Link>
+          
+          <Link href="/pengelola/keuangan">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-background">
               <CreditCard className="h-4 w-4 text-purple-600" /> SPP ({pendingSpp})
-            </Link>
-          </Button>
+            </Button>
+          </Link>
         </div>
       </div>
 
