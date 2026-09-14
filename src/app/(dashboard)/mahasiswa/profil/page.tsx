@@ -13,9 +13,10 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Loader2, Pencil, X, Phone } from 'lucide-react'
+import { Loader2, Pencil, X, Phone, DoorOpen } from 'lucide-react'
 import { UNIT_OPTIONS } from '@/lib/constants'
 
+// --- 1. TAMBAHKAN KAMAR DI VALIDASI ZOD ---
 const profileSchema = z.object({
   nama: z.string().min(3, "Nama minimal harus 3 karakter"),
   nim: z.string().min(5, "NIM minimal harus 5 karakter"),
@@ -23,6 +24,7 @@ const profileSchema = z.object({
   angkatan: z.coerce.number().min(2000, "Tahun angkatan tidak valid"),
   semester: z.string().optional().or(z.literal('')), 
   no_telepon: z.string().min(10, "Nomor telepon minimal 10 digit").regex(/^[0-9+]+$/, "Format nomor telepon tidak valid"),
+  kamar: z.string().min(1, "Nama/Nomor kamar wajib diisi"), // Field baru
 })
 
 type ProfileFormData = z.infer<typeof profileSchema>
@@ -39,7 +41,8 @@ export default function EditProfilPage() {
   const supabase = createClient()
   const form = useForm<ProfileFormData>({ 
     resolver: zodResolver(profileSchema),
-    defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '', unit: undefined, no_telepon: '' }
+    // --- 2. TAMBAHKAN DEFAULT VALUE KAMAR ---
+    defaultValues: { nama: '', nim: '', angkatan: new Date().getFullYear(), semester: '', unit: undefined, no_telepon: '', kamar: '' }
   })
   
   const { errors } = form.formState
@@ -54,9 +57,10 @@ export default function EditProfilPage() {
             return
         }
 
+        // --- 3. SELECT KOLOM KAMAR DARI DATABASE ---
         const { data, error } = await supabase
           .from('profiles')
-          .select('nama, nim, angkatan, semester, unit, no_telepon, role, is_completed')
+          .select('nama, nim, angkatan, semester, unit, no_telepon, role, is_completed, kamar')
           .eq('id', user.id)
           .single()
         
@@ -69,7 +73,8 @@ export default function EditProfilPage() {
             unit: (data.unit === 'mahad_aly' || data.unit === 'lkim') ? data.unit : undefined,
             angkatan: data.angkatan || new Date().getFullYear(),
             semester: data.semester ? data.semester.toString() : '',
-            no_telepon: data.no_telepon || ''
+            no_telepon: data.no_telepon || '',
+            kamar: data.kamar || '' // Masukkan ke local state
           }
           
           setIsCompleted(data.is_completed ?? false)
@@ -102,6 +107,7 @@ export default function EditProfilPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error("Sesi habis, silakan login kembali.")
       
+      // --- 4. KIRIM DATA KAMAR KE DATABASE ---
       const payload = { 
         nama: data.nama,
         nim: data.nim,
@@ -109,6 +115,7 @@ export default function EditProfilPage() {
         angkatan: data.angkatan,
         semester: data.semester ? parseInt(data.semester) : null,
         no_telepon: data.no_telepon,
+        kamar: data.kamar,
         is_completed: true 
       }
       
@@ -161,6 +168,7 @@ export default function EditProfilPage() {
 
         <CardContent className={isCompleted && !isEditing ? "pt-2 pb-8" : "pt-6"}>
           
+          {/* --- VIEW MODE --- */}
           {!isEditing && originalData ? (
             <div className="space-y-5">
               <div className="grid grid-cols-3 border-b pb-3">
@@ -175,6 +183,13 @@ export default function EditProfilPage() {
                 <span className="text-sm font-medium text-muted-foreground">No. WhatsApp</span>
                 <span className="col-span-2 font-medium flex items-center gap-1.5 text-green-700">
                   <Phone className="h-3.5 w-3.5" /> {originalData.no_telepon}
+                </span>
+              </div>
+              {/* 5. TAMPILKAN KAMAR DI VIEW MODE */}
+              <div className="grid grid-cols-3 border-b pb-3">
+                <span className="text-sm font-medium text-muted-foreground">Kamar</span>
+                <span className="col-span-2 font-medium flex items-center gap-1.5">
+                  <DoorOpen className="h-4 w-4 text-slate-400" /> {originalData.kamar}
                 </span>
               </div>
               <div className="grid grid-cols-3 border-b pb-3">
@@ -196,6 +211,7 @@ export default function EditProfilPage() {
             </div>
           ) : (
             
+            /* --- EDIT MODE (FORM) --- */
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <div className="space-y-2">
                 <Label>Nama Lengkap</Label>
@@ -213,6 +229,13 @@ export default function EditProfilPage() {
                 <Label>Nomor WhatsApp yang masuk di grup KOMPLEK H (Contoh: 08123456789)</Label>
                 <Input placeholder="08..." {...form.register('no_telepon')} className={errors.no_telepon ? "border-red-500" : ""} />
                 {errors.no_telepon && <p className="text-xs text-red-500">{errors.no_telepon.message}</p>}
+              </div>
+
+              {/* 6. INPUT KAMAR DI FORM */}
+              <div className="space-y-2">
+                <Label>Nama / Nomor Kamar</Label>
+                <Input placeholder="Contoh: A1, Khadijah-02, dll" {...form.register('kamar')} className={errors.kamar ? "border-red-500" : ""} />
+                {errors.kamar && <p className="text-xs text-red-500">{errors.kamar.message}</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
