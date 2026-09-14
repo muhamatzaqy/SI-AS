@@ -47,7 +47,7 @@ const masterFormSchema = z.object({
 })
 type MasterFormData = z.infer<typeof masterFormSchema>
 
-// --- TYPE UNTUK GROUPING (Pencegah error TypeScript) ---
+// --- TYPE UNTUK GROUPING ---
 type GroupedData = {
   id: string;
   nama: string;
@@ -85,7 +85,7 @@ export default function JadwalDanMasterPage() {
   // State Sesi
   const [searchSesi, setSearchSesi] = useState('')
   const [pageSesi, setPageSesi] = useState(1)
-  const [expandedGroups, setExpandedGroups] = useState<string[]>([]) // Menyimpan ID kegiatan yang sedang dibuka
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([])
   
   // State Master
   const [searchMaster, setSearchMaster] = useState('')
@@ -131,27 +131,34 @@ export default function JadwalDanMasterPage() {
     fetchJadwals() 
   }, [])
 
-  // Reset page ke 1 setiap kali search bar diketik
   useEffect(() => { setPageSesi(1) }, [searchSesi])
   useEffect(() => { setPageMaster(1) }, [searchMaster])
 
-  const isJadwalFinished = (jadwal: any): boolean => {
+  // --- HELPER STATUS JADWAL BARU ---
+  const getJadwalStatus = (jadwal: any): 'selesai' | 'berlangsung' | 'akan_datang' => {
     try {
       const now = new Date()
+      // Gunakan local format YYYY-MM-DD
       const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
       
-      if (jadwal.tanggal > todayStr) return false 
-      if (jadwal.tanggal < todayStr) return true  
+      if (jadwal.tanggal < todayStr) return 'selesai'
+      if (jadwal.tanggal > todayStr) return 'akan_datang'
       
-      const currentTimeStr = now.toLocaleTimeString('en-US', { timeZone: 'Asia/Jakarta', hour12: false })
-      return currentTimeStr >= jadwal.jam_selesai
+      // Jika jadwal ada di hari ini:
+      const currentTimeStr = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit' })
+      const jamMulai = jadwal.jam_mulai?.slice(0, 5) || "00:00"
+      const jamSelesai = jadwal.jam_selesai?.slice(0, 5) || "23:59"
+
+      if (currentTimeStr >= jamSelesai) return 'selesai'
+      if (currentTimeStr >= jamMulai) return 'berlangsung'
+      
+      return 'akan_datang'
     } catch { 
-      return false 
+      return 'akan_datang' 
     }
   }
 
-  // --- LOGIC GROUPING SESI BERDASARKAN NAMA KEGIATAN ---
-  // 1. Filter dulu jadwalnya
+  // --- LOGIC GROUPING SESI ---
   const filteredJadwals = jadwals.filter(j => {
     if (!searchSesi) return true
     const s = searchSesi.toLowerCase()
@@ -161,7 +168,6 @@ export default function JadwalDanMasterPage() {
     )
   })
 
-  // 2. Lakukan Grouping berdasarkan nama_kegiatan_id (dengan Type Data spesifik agar TS tidak error)
   const groupedJadwals = filteredJadwals.reduce((acc, j) => {
     const actId = j.nama_kegiatan?.id || 'unknown'
     if (!acc[actId]) {
@@ -176,14 +182,10 @@ export default function JadwalDanMasterPage() {
     return acc
   }, {} as Record<string, GroupedData>)
 
-  // 3. Ubah object jadi array dan urutkan berdasarkan nama (Alphabetical) dengan Casting EXPLISIT (as GroupedData[])
   const groupedArray = (Object.values(groupedJadwals) as GroupedData[]).sort((a, b) => a.nama.localeCompare(b.nama))
-  
-  // 4. Pagination dilakukan pada level GRUP (bukan level sesi individu)
   const totalPagesSesi = Math.ceil(groupedArray.length / ITEMS_PER_PAGE)
   const currentGroupedSesi = groupedArray.slice((pageSesi - 1) * ITEMS_PER_PAGE, pageSesi * ITEMS_PER_PAGE)
 
-  // Fungsi toggle buka/tutup grup
   const toggleGroup = (id: string) => {
     setExpandedGroups(prev => 
       prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]
@@ -304,7 +306,6 @@ export default function JadwalDanMasterPage() {
         const { error } = await supabase.from('sesi').insert(payload)
         if (error) throw error
         toast({ title: 'Berhasil', description: 'Jadwal sesi tersimpan', variant: 'success' })
-        // Otomatis expand grup baru yang baru ditambahkan
         setExpandedGroups(prev => prev.includes(payload.nama_kegiatan_id) ? prev : [...prev, payload.nama_kegiatan_id])
       }
       
@@ -457,6 +458,8 @@ export default function JadwalDanMasterPage() {
             ) : (
               currentGroupedSesi.map((group) => {
                 const isExpanded = expandedGroups.includes(group.id)
+                // Deteksi apakah dalam grup ini ada minimal 1 sesi yang sedang berlangsung
+                const isGroupOngoing = group.sesiList.some((j: any) => getJadwalStatus(j) === 'berlangsung')
                 
                 return (
                   <Card key={group.id} className="overflow-hidden border-border/60 shadow-sm hover:shadow-md transition-shadow">
@@ -473,6 +476,17 @@ export default function JadwalDanMasterPage() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <h4 className="font-semibold text-base">{group.nama}</h4>
                             <Badge variant="secondary" className="font-normal text-[10px] px-1.5 h-5">{group.jenis}</Badge>
+                            
+                            {/* INDIKATOR SEDANG BERLANGSUNG PADA FOLDER */}
+                            {isGroupOngoing && (
+                              <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200 flex items-center h-5 px-1.5 gap-1.5">
+                                <span className="relative flex h-1.5 w-1.5">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-600"></span>
+                                </span>
+                                Sedang Berlangsung
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-xs text-muted-foreground mt-0.5">{group.sesiList.length} sesi terjadwal dalam kegiatan ini</p>
                         </div>
@@ -486,7 +500,7 @@ export default function JadwalDanMasterPage() {
                     {isExpanded && (
                       <div className="divide-y divide-border/50 bg-card">
                         {group.sesiList.map((j: any) => {
-                          const finished = isJadwalFinished(j)
+                          const status = getJadwalStatus(j)
                           const audiensLabel = getAudiensLabel(j.tipe_target, j.target_audiens)
 
                           // Kalkulator kelengkapan
@@ -511,7 +525,11 @@ export default function JadwalDanMasterPage() {
                                   </div>
                                   <span className="text-muted-foreground text-sm">•</span>
                                   <span className="text-sm">{j.jam_mulai.slice(0,5)} – {j.jam_selesai.slice(0,5)} WIB</span>
-                                  {finished ? <Badge variant="destructive" className="text-[10px] ml-1">Selesai</Badge> : <Badge variant="outline" className="text-[10px] ml-1 bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
+                                  
+                                  {/* LABEL STATUS TIAP SESI YANG LEBIH AKURAT */}
+                                  {status === 'selesai' && <Badge variant="destructive" className="text-[10px] ml-1">Selesai</Badge>}
+                                  {status === 'berlangsung' && <Badge variant="outline" className="text-[10px] ml-1 bg-green-50 text-green-700 border-green-200">Berlangsung</Badge>}
+                                  {status === 'akan_datang' && <Badge variant="secondary" className="text-[10px] ml-1 bg-blue-50 text-blue-700 border-blue-200">Akan Datang</Badge>}
                                 </div>
                                 <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                                   <Users className="h-3.5 w-3.5" /> Target Peserta: <span className="font-medium text-foreground/80">{audiensLabel}</span>
@@ -519,7 +537,8 @@ export default function JadwalDanMasterPage() {
                               </div>
                               
                               <div className="flex gap-2 shrink-0 items-center">
-                                {finished && (
+                                {/* Opsi Tandai Alpha hanya muncul jika sesi sudah SELESAI */}
+                                {status === 'selesai' && (
                                   isComplete ? (
                                     <Badge variant="success" className="h-8 px-2.5 text-xs flex items-center gap-1.5 rounded-md font-medium border border-green-200 bg-green-50 text-green-700">
                                       <CheckCircle2 className="h-3.5 w-3.5" /> Presensi Lengkap ({currentCount}/{targetCount})
