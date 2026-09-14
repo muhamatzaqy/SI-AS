@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { 
-  Users, Calendar, CheckSquare, CreditCard, ArrowRight, Plus, 
+  Users, Calendar, CheckSquare, CreditCard, ArrowRight, 
   Clock, CheckCircle2, ShieldAlert, Wallet, TrendingUp 
 } from 'lucide-react'
 import { formatDate, formatCurrency, formatLabel, calcAttendancePercentage, getAttendanceBgColor } from '@/lib/utils'
@@ -42,9 +42,9 @@ export default async function PengelolaDashboard() {
     supabase.from('izin_pulang').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('tagihan_spp').select('*', { count: 'exact', head: true }).eq('status', 'menunggu_verifikasi'),
     
-    // Sesi hari ini lengkap dengan presensi yang sudah masuk
+    // Sesi hari ini (Query dioptimalkan tanpa mengambil data presensi karena sudah tidak diperlukan di UI)
     supabase.from('sesi')
-      .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis)), presensi(id, status)')
+      .select('*, nama_kegiatan(nama_kegiatan, jenis_kegiatan(nama_jenis))')
       .eq('tanggal', todayWIB)
       .order('jam_mulai', { ascending: true }),
 
@@ -121,20 +121,14 @@ export default async function PengelolaDashboard() {
           description={`Ringkasan operasional asrama hari ini · ${formatDate(new Date())}`}
         />
         <div className="flex flex-wrap items-center gap-2">
-          <Link href="/admin/jadwal">
-            <Button size="sm" className="gap-1.5 shadow-sm">
-              <Plus className="h-4 w-4" /> Tambah Sesi
-            </Button>
-          </Link>
-          
           <Link href="/pengelola/perizinan">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-background">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-background shadow-sm">
               <CheckSquare className="h-4 w-4 text-amber-600" /> Review Izin ({pendingIzinTotal})
             </Button>
           </Link>
           
           <Link href="/pengelola/keuangan">
-            <Button variant="outline" size="sm" className="gap-1.5 bg-background">
+            <Button variant="outline" size="sm" className="gap-1.5 bg-background shadow-sm">
               <CreditCard className="h-4 w-4 text-purple-600" /> SPP ({pendingSpp})
             </Button>
           </Link>
@@ -186,39 +180,28 @@ export default async function PengelolaDashboard() {
           <CardContent className="p-4 flex-1">
             {sesiToday && sesiToday.length > 0 ? (
               <div className="space-y-3">
-                {sesiToday.map((sesi: any) => {
-                  const presensiCount = sesi.presensi?.length || 0
-                  return (
-                    <div 
-                      key={sesi.id} 
-                      className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
-                    >
-                      <div className="space-y-1 min-w-0 pr-2">
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-sm text-foreground truncate">
-                            {sesi.nama_kegiatan?.nama_kegiatan}
-                          </p>
-                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
-                            {sesi.nama_kegiatan?.jenis_kegiatan?.nama_jenis}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                          <span>{sesi.jam_mulai.slice(0,5)}–{sesi.jam_selesai.slice(0,5)} WIB</span>
-                          <span>•</span>
-                          <span className="capitalize">Target: {formatLabel(sesi.tipe_target)}</span>
+                {sesiToday.map((sesi: any) => (
+                  <div 
+                    key={sesi.id} 
+                    className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="space-y-1 min-w-0 pr-2">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-sm text-foreground truncate">
+                          {sesi.nama_kegiatan?.nama_kegiatan}
                         </p>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                          {sesi.nama_kegiatan?.jenis_kegiatan?.nama_jenis}
+                        </Badge>
                       </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right">
-                          <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                            {presensiCount} Masuk
-                          </p>
-                        </div>
-                      </div>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <span>{sesi.jam_mulai.slice(0,5)}–{sesi.jam_selesai.slice(0,5)} WIB</span>
+                        <span>•</span>
+                        <span className="capitalize">Target: {formatLabel(sesi.tipe_target)}</span>
+                      </p>
                     </div>
-                  )
-                })}
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center py-10 text-center text-muted-foreground">
