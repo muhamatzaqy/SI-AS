@@ -11,9 +11,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useToast } from '@/hooks/use-toast'
 import { useGeolocation } from '@/hooks/use-geolocation'
 import { useCamera } from '@/hooks/use-camera'
-import { Camera, MapPin, Check, Loader2, AlertCircle, Map, CalendarX, Info } from 'lucide-react'
+import { Camera, MapPin, Check, Loader2, AlertCircle, Map, CalendarX, Info, FolderOpen, CalendarDays, ChevronDown, ChevronRight } from 'lucide-react'
 import { IMAGE_COMPRESSION_OPTIONS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
+
+// --- TYPE UNTUK GROUPING ---
+type GroupedAbsensi = {
+  id: string;
+  nama: string;
+  jenis: string;
+  sesiList: any[];
+}
 
 export default function AbsensiPage() {
   const [jadwals, setJadwals] = useState<any[]>([])
@@ -23,6 +31,7 @@ export default function AbsensiPage() {
   const [submitting, setSubmitting] = useState(false)
   
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]) // State untuk Accordion Folder Group
 
   const { toast } = useToast()
   const { latitude, longitude, error: geoError, loading: geoLoading, getLocation } = useGeolocation()
@@ -57,12 +66,11 @@ export default function AbsensiPage() {
         .eq('id', user.id)
         .single()
       
-      // MENGGUNAKAN ZONA WAKTU WIB
       const wib = getWaktuWIB()
       
       const { data: sesiData } = await supabase
         .from('sesi')
-        .select('*, nama_kegiatan(nama_kegiatan)')
+        .select('*, nama_kegiatan(id, nama_kegiatan, jenis_id, jenis_kegiatan(id, nama_jenis))')
         .eq('tanggal', wib.dateString)
         .order('jam_mulai', { ascending: true })
       
@@ -77,6 +85,19 @@ export default function AbsensiPage() {
       })
       
       setJadwals(validSesi)
+      
+      // Otomatis buka/expand grup yang memiliki sesi aktif/berlangsung
+      const ongoingGroupIds: string[] = []
+      validSesi.forEach((j: any) => {
+        const status = checkStatusWaktu(j).status
+        const actId = j.nama_kegiatan?.id
+        if (status === 'active' && actId && !ongoingGroupIds.includes(actId)) {
+          ongoingGroupIds.push(actId)
+        }
+      })
+      if (ongoingGroupIds.length > 0) {
+        setExpandedGroups(prev => Array.from(new Set([...prev, ...ongoingGroupIds])))
+      }
       
       if (validSesi.length > 0) {
         const ids = validSesi.map((j: any) => j.id)
@@ -98,7 +119,7 @@ export default function AbsensiPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // --- LOGIKA WAKTU (SUDAH FIX WIB) ---
+  // --- LOGIKA WAKTU (WIB) ---
   const checkStatusWaktu = (jadwal: any) => {
     if (!jadwal || !jadwal.jam_mulai || !jadwal.jam_selesai) return { status: 'unknown', text: '' }
     
@@ -128,10 +149,8 @@ export default function AbsensiPage() {
     if (!jadwal || !jadwal.jam_selesai) return null
     try {
       const wib = getWaktuWIB()
-      
       const [endHour, endMin] = jadwal.jam_selesai.split(':').map(Number)
       const endTimeValue = endHour * 60 + endMin
-      
       const diffMinutes = endTimeValue - wib.totalMinutes
       
       if (diffMinutes <= 0) return 'Waktu habis'
@@ -140,6 +159,29 @@ export default function AbsensiPage() {
       const hours = Math.floor(diffMinutes / 60)
       return `${hours}j ${diffMinutes % 60}m lagi`
     } catch { return null }
+  }
+
+  // --- LOGIC GROUPING ---
+  const groupedJadwals = jadwals.reduce((acc, j) => {
+    const actId = j.nama_kegiatan?.id || 'unknown'
+    if (!acc[actId]) {
+      acc[actId] = {
+        id: actId,
+        nama: j.nama_kegiatan?.nama_kegiatan || 'Tidak diketahui',
+        jenis: j.nama_kegiatan?.jenis_kegiatan?.nama_jenis || '-',
+        sesiList: []
+      }
+    }
+    acc[actId].sesiList.push(j)
+    return acc
+  }, {} as Record<string, GroupedAbsensi>)
+
+  const groupedArray = (Object.values(groupedJadwals) as GroupedAbsensi[]).sort((a, b) => a.nama.localeCompare(b.nama))
+
+  const toggleGroup = (id: string) => {
+    setExpandedGroups(prev => 
+      prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]
+    )
   }
 
   const uploadPhotoToStorage = async (blob: Blob, userId: string) => {
@@ -191,7 +233,7 @@ export default function AbsensiPage() {
         mahasiswa_id: user.id,
         sesi_id: selectedJadwal.id,
         status: 'hadir',
-        waktu_absen: new Date().toISOString(), // Supabase otomatis convert ke UTC, aman
+        waktu_absen: new Date().toISOString(),
         foto_url: fotoUrl,
         latitude: latitude,
         longitude: longitude
@@ -225,8 +267,8 @@ export default function AbsensiPage() {
       <PageHeader title="Absensi Digital" description={`Jadwal sesi hari ini - ${formatDate(new Date(getWaktuWIB().dateString))}`} />
 
       {loading ? (
-        <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}</div>
-      ) : jadwals.length === 0 ? (
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 w-full rounded-xl" />)}</div>
+      ) : groupedArray.length === 0 ? (
         <Card className="border-dashed shadow-none">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center px-4">
             <div className="h-16 w-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
@@ -238,80 +280,122 @@ export default function AbsensiPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {jadwals.map((j: any) => {
-            const waktuInfo = checkStatusWaktu(j)
-            const isLate = waktuInfo.status === 'late'
-            const isEarly = waktuInfo.status === 'early'
-            const isActive = waktuInfo.status === 'active'
-            
-            const currentStatus = presensiMap[j.id]
+          {groupedArray.map((group) => {
+            const isExpanded = expandedGroups.includes(group.id)
+            // Deteksi apakah dalam grup ini ada minimal 1 sesi yang sedang berlangsung (active)
+            const isGroupOngoing = group.sesiList.some((j: any) => checkStatusWaktu(j).status === 'active')
 
             return (
-              <Card key={j.id} className="transition-all hover:border-primary/40 hover:shadow-md overflow-hidden">
-                <CardContent className="flex flex-col md:flex-row md:items-center justify-between gap-5 p-5">
-                  <div className="space-y-1.5 min-w-0 flex-1">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <p className="font-bold text-foreground text-lg">{j.nama_kegiatan?.nama_kegiatan}</p>
-                      
-                      {/* Lencana Waktu Dinamis */}
-                      {!currentStatus && isLate && <Badge variant="destructive" className="text-[10px] uppercase tracking-wider">Terlambat</Badge>}
-                      {!currentStatus && isEarly && <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">Akan Datang</Badge>}
-                      {!currentStatus && isActive && (
-                        <Badge variant="outline" className="text-[10px] uppercase tracking-wider bg-green-50 text-green-700 border-green-200 animate-pulse">
-                          Sedang Berlangsung
-                        </Badge>
-                      )}
+              <Card key={group.id} className="overflow-hidden border-border/60 shadow-sm hover:shadow-md transition-shadow">
+                {/* Header Grup (Accordion Folder) */}
+                <div 
+                  className={`flex items-center justify-between p-4 cursor-pointer transition-colors ${isExpanded ? 'bg-muted/30 border-b' : 'hover:bg-muted/30'}`}
+                  onClick={() => toggleGroup(group.id)}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`p-2 rounded-lg ${isExpanded ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                      <FolderOpen className="h-5 w-5" />
                     </div>
-                    
-                    <p className="text-sm text-muted-foreground flex items-center gap-2">
-                      <span className="inline-block p-1 bg-slate-100 rounded-md">
-                        🕒 {j.jam_mulai.slice(0,5)} – {j.jam_selesai.slice(0,5)} WIB
-                      </span>
-                    </p>
-                    
-                    {/* Hitung Mundur (Countdown) */}
-                    {!currentStatus && isActive && (
-                      <p className="text-xs text-orange-600 font-medium mt-2 flex items-center gap-1.5">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Sisa waktu absensi: {getTimeRemaining(j)}
-                      </p>
-                    )}
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-semibold text-base">{group.nama}</h4>
+                        <Badge variant="secondary" className="font-normal text-[10px] px-1.5 h-5">{group.jenis}</Badge>
+                        
+                        {/* INDIKATOR SEDANG BERLANGSUNG PADA FOLDER */}
+                        {isGroupOngoing && (
+                          <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200 flex items-center h-5 px-1.5 gap-1.5">
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-600"></span>
+                            </span>
+                            Sedang Berlangsung
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{group.sesiList.length} sesi terjadwal hari ini</p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 ml-4 text-muted-foreground">
+                    {isExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                  </div>
+                </div>
 
-                    {/* Info tambahan jika Izin (Hasil Trigger Database) */}
-                    {currentStatus === 'izin' && (
-                      <p className="text-xs text-yellow-700 mt-2 flex items-center gap-1.5 bg-yellow-50 w-max px-2.5 py-1 rounded-md border border-yellow-100">
-                        <Info className="h-3.5 w-3.5" /> Diisi otomatis sesuai perizinan asrama.
-                      </p>
-                    )}
+                {/* Isi Grup (List Sesi Jadwal) */}
+                {isExpanded && (
+                  <div className="divide-y divide-border/50 bg-card">
+                    {group.sesiList.map((j: any) => {
+                      const waktuInfo = checkStatusWaktu(j)
+                      const isLate = waktuInfo.status === 'late'
+                      const isEarly = waktuInfo.status === 'early'
+                      const isActive = waktuInfo.status === 'active'
+                      const currentStatus = presensiMap[j.id]
+
+                      return (
+                        <div key={j.id} className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4 hover:bg-muted/20 transition-colors pl-6 md:pl-16">
+                          <div className="space-y-1.5 min-w-0 flex-1">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                                <CalendarDays className="h-4 w-4 text-primary/70" />
+                                <span>{j.jam_mulai.slice(0,5)} – {j.jam_selesai.slice(0,5)} WIB</span>
+                              </div>
+                              
+                              {/* Lencana Waktu Dinamis */}
+                              {!currentStatus && isLate && <Badge variant="destructive" className="text-[10px] uppercase tracking-wider">Terlambat</Badge>}
+                              {!currentStatus && isEarly && <Badge variant="secondary" className="text-[10px] uppercase tracking-wider bg-blue-50 text-blue-700 border-blue-200">Akan Datang</Badge>}
+                              {!currentStatus && isActive && (
+                                <Badge variant="outline" className="text-[10px] uppercase tracking-wider bg-green-50 text-green-700 border-green-200 animate-pulse">
+                                  Sedang Berlangsung
+                                </Badge>
+                              )}
+                            </div>
+                            
+                            {/* Hitung Mundur (Countdown) */}
+                            {!currentStatus && isActive && (
+                              <p className="text-xs text-orange-600 font-medium flex items-center gap-1.5">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Sisa waktu absensi: {getTimeRemaining(j)}
+                              </p>
+                            )}
+
+                            {/* Info tambahan jika Izin */}
+                            {currentStatus === 'izin' && (
+                              <p className="text-xs text-yellow-700 flex items-center gap-1.5 bg-yellow-50 w-max px-2.5 py-1 rounded-md border border-yellow-100">
+                                <Info className="h-3.5 w-3.5" /> Diisi otomatis sesuai perizinan asrama.
+                              </p>
+                            )}
+                          </div>
+                          
+                          <div className="shrink-0 flex items-center justify-end w-full md:w-auto pt-2 md:pt-0">
+                            {currentStatus ? (
+                              <Badge 
+                                variant={currentStatus === 'hadir' ? 'success' : currentStatus === 'izin' ? 'warning' : 'destructive'} 
+                                className="py-2 px-4 text-sm font-semibold rounded-lg shadow-sm"
+                              >
+                                {currentStatus === 'hadir' ? <Check className="mr-2 h-4 w-4" /> : null} 
+                                {currentStatus === 'hadir' ? 'Hadir' : currentStatus === 'izin' ? 'Sedang Izin' : 'Alpha (Tidak Hadir)'}
+                              </Badge>
+                            ) : (
+                              <Button 
+                                size="sm" 
+                                className="w-full md:w-auto rounded-xl shadow-sm" 
+                                disabled={!isActive}
+                                onClick={() => openAbsensiModal(j)}
+                              >
+                                {waktuInfo.text}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                  
-                  <div className="shrink-0 flex items-center justify-end w-full md:w-auto pt-2 md:pt-0 border-t md:border-0 md:pl-4 border-slate-100">
-                    {currentStatus ? (
-                      <Badge 
-                        variant={currentStatus === 'hadir' ? 'success' : currentStatus === 'izin' ? 'warning' : 'destructive'} 
-                        className="py-2 px-4 text-sm font-semibold rounded-lg shadow-sm"
-                      >
-                        {currentStatus === 'hadir' ? <Check className="mr-2 h-4 w-4" /> : null} 
-                        {currentStatus === 'hadir' ? 'Hadir' : currentStatus === 'izin' ? 'Sedang Izin' : 'Alpha (Tidak Hadir)'}
-                      </Badge>
-                    ) : (
-                      <Button 
-                        size="lg" 
-                        className="w-full md:w-auto rounded-xl shadow-sm" 
-                        disabled={!isActive}
-                        onClick={() => openAbsensiModal(j)}
-                      >
-                        {waktuInfo.text}
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
+                )}
               </Card>
             )
           })}
         </div>
       )}
 
-      {/* --- DIALOG MODAL (TIDAK ADA PERUBAHAN, HANYA LOGIKA WAKTU DIATAS) --- */}
+      {/* --- DIALOG MODAL ABSENSI --- */}
       <Dialog open={isModalOpen} onOpenChange={(open) => {
         if (!submitting) {
           setIsModalOpen(open)
