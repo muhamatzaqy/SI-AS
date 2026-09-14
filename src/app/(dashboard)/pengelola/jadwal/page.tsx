@@ -47,6 +47,14 @@ const masterFormSchema = z.object({
 })
 type MasterFormData = z.infer<typeof masterFormSchema>
 
+// --- TYPE UNTUK GROUPING (Memperbaiki error TypeScript) ---
+type GroupedData = {
+  id: string;
+  nama: string;
+  jenis: string;
+  sesiList: any[];
+}
+
 export default function JadwalDanMasterPage() {
   const supabase = createClient()
   const { toast } = useToast()
@@ -153,7 +161,7 @@ export default function JadwalDanMasterPage() {
     )
   })
 
-  // 2. Lakukan Grouping berdasarkan nama_kegiatan_id
+  // 2. Lakukan Grouping berdasarkan nama_kegiatan_id (dengan Type Data spesifik agar TS tidak error)
   const groupedJadwals = filteredJadwals.reduce((acc, j) => {
     const actId = j.nama_kegiatan?.id || 'unknown'
     if (!acc[actId]) {
@@ -166,7 +174,7 @@ export default function JadwalDanMasterPage() {
     }
     acc[actId].sesiList.push(j)
     return acc
-  }, {} as Record<string, any>)
+  }, {} as Record<string, GroupedData>)
 
   // 3. Ubah object jadi array dan urutkan berdasarkan nama (Alphabetical)
   const groupedArray = Object.values(groupedJadwals).sort((a, b) => a.nama.localeCompare(b.nama))
