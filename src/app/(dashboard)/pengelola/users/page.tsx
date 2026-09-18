@@ -37,9 +37,10 @@ export default function UsersPage() {
     toast({ title: 'Berhasil', description: 'Status diperbarui', variant: 'success' })
   }
 
-  const filtered = users.filter(u => {
-    const matchSearch = u.nama.toLowerCase().includes(search.toLowerCase()) || u.nim.includes(search)
-    const matchUnit = unitFilter === 'all' || u.unit === unitFilter
+  const filtered = (users || []).filter(u => {
+    // Tambahkan '?.' (optional chaining) untuk mencegah error jika nama/nim kosong
+    const matchSearch = u?.nama?.toLowerCase().includes(search.toLowerCase()) || u?.nim?.includes(search)
+    const matchUnit = unitFilter === 'all' || u?.unit === unitFilter
     return matchSearch && matchUnit
   })
 
