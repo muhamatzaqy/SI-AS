@@ -1,8 +1,7 @@
-// app/reset-password/page.tsx
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createClient } from '@/lib/supabase/client'
@@ -12,9 +11,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2, Eye, EyeOff } from 'lucide-react'
 
-export default function ResetPasswordPage() {
+// Komponen form dipisah agar bisa dibungkus oleh Suspense
+function ResetPasswordForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [error, setError] = useState<string | null>(null)
+  const [isVerifying, setIsVerifying] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
   const supabase = createClient()
   
@@ -22,10 +24,38 @@ export default function ResetPasswordPage() {
     resolver: zodResolver(resetPasswordSchema)
   })
 
+  // Verifikasi token dari URL (dikirim dari email) saat halaman dimuat
+  useEffect(() => {
+    const verifyToken = async () => {
+      const token_hash = searchParams.get('token_hash')
+      const type = searchParams.get('type')
+
+      if (token_hash && type === 'recovery') {
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash,
+          type: 'recovery',
+        })
+        
+        if (error) {
+          setError('Link reset password tidak valid atau sudah kadaluarsa. Silakan request link baru.')
+        }
+      } else {
+        // Cek apakah user sudah punya sesi aktif
+        const { data } = await supabase.auth.getSession()
+        if (!data.session) {
+          setError('Akses ditolak. Token reset password tidak ditemukan di URL.')
+        }
+      }
+      setIsVerifying(false)
+    }
+
+    verifyToken()
+  }, [searchParams, supabase.auth])
+
   const onSubmit = async (data: ResetPasswordData) => {
     setError(null)
     
-    // Update password user yang sedang aktif (Supabase otomatis mendeteksi session dari URL token)
+    // Update password
     const { error: updateError } = await supabase.auth.updateUser({
       password: data.password
     })
@@ -35,11 +65,79 @@ export default function ResetPasswordPage() {
       return
     }
 
-    // Jika sukses, arahkan ke login
     alert('Password berhasil diubah! Silakan login dengan password baru.')
     router.push('/login')
   }
 
+  if (isVerifying) {
+    return (
+      <div className="flex flex-col items-center justify-center space-y-4 py-8">
+        <Loader2 className="h-8 w-8 animate-spin text-[#0d5c36]" />
+        <p className="text-sm font-medium text-slate-600">Memverifikasi link...</p>
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      {error && (
+        <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 border border-red-200 text-center">
+          {error}
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="password" className="text-sm font-semibold text-slate-700">Password Baru</Label>
+        <div className="relative">
+          <Input
+            id="password"
+            type={showPassword ? "text" : "password"}
+            placeholder="••••••••"
+            className="h-12 rounded-xl border-slate-300 bg-white text-slate-900 pr-10"
+            {...register('password')}
+            disabled={!!error}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            disabled={!!error}
+          >
+            {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+          </button>
+        </div>
+        {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="confirmPassword" className="text-sm font-semibold text-slate-700">Konfirmasi Password Baru</Label>
+        <Input
+          id="confirmPassword"
+          type={showPassword ? "text" : "password"}
+          placeholder="••••••••"
+          className="h-12 rounded-xl border-slate-300 bg-white text-slate-900"
+          {...register('confirmPassword')}
+          disabled={!!error}
+        />
+        {errors.confirmPassword && <p className="text-xs text-red-500">{errors.confirmPassword.message}</p>}
+      </div>
+
+      <Button
+        type="submit"
+        className="mt-6 h-12 w-full rounded-xl bg-[#0d5c36] text-white text-[15px] font-semibold hover:bg-[#0a4a2b]"
+        disabled={isSubmitting || !!error}
+      >
+        {isSubmitting ? (
+          <><Loader2 className="mr-2 h-5 w-5 animate-spin" />Menyimpan...</>
+        ) : (
+          'Simpan Password'
+        )}
+      </Button>
+    </form>
+  )
+}
+
+export default function ResetPasswordPage() {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0d5c36] p-4">
       <div className="absolute inset-0 islamic-pattern opacity-20" />
@@ -51,58 +149,15 @@ export default function ResetPasswordPage() {
             <p className="mt-1 text-sm text-slate-500">Masukkan password baru Anda</p>
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            {error && (
-              <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 border border-red-200 text-center">
-                {error}
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <Label htmlFor="password" className="text-sm font-semibold text-slate-700">Password Baru</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="••••••••"
-                  className="h-12 rounded-xl border-slate-300 bg-white text-slate-900 pr-10"
-                  {...register('password')}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-              {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
+          {/* Suspense digunakan karena kita memakai useSearchParams dari Next.js */}
+          <Suspense fallback={
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-[#0d5c36]" />
             </div>
+          }>
+            <ResetPasswordForm />
+          </Suspense>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="confirmPassword" className="text-sm font-semibold text-slate-700">Konfirmasi Password Baru</Label>
-              <Input
-                id="confirmPassword"
-                type={showPassword ? "text" : "password"}
-                placeholder="••••••••"
-                className="h-12 rounded-xl border-slate-300 bg-white text-slate-900"
-                {...register('confirmPassword')}
-              />
-              {errors.confirmPassword && <p className="text-xs text-red-500">{errors.confirmPassword.message}</p>}
-            </div>
-
-            <Button
-              type="submit"
-              className="mt-6 h-12 w-full rounded-xl bg-[#0d5c36] text-white text-[15px] font-semibold hover:bg-[#0a4a2b]"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <><Loader2 className="mr-2 h-5 w-5 animate-spin" />Menyimpan...</>
-              ) : (
-                'Simpan Password'
-              )}
-            </Button>
-          </form>
         </div>
       </div>
     </div>
