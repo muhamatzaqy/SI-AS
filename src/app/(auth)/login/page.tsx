@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const supabase = createClient()
+  
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginFormData>({ 
     resolver: zodResolver(loginSchema) 
   })
@@ -80,10 +81,9 @@ export default function LoginPage() {
           <p className="mt-1 text-sm text-white/80">Sistem Absensi Ngaji Asrama</p>
         </div>
 
-        {/* Kotak Putih (Card) - Diperbaiki warna teksnya di sini! */}
+        {/* Kotak Putih (Card) */}
         <div className="rounded-3xl bg-[#f8fafc] p-7 shadow-2xl animation-delay-200 animate-slide-up border border-slate-100">
           <div className="mb-6 text-center">
-            {/* Teks dipaksa hitam/gelap agar terlihat di latar putih */}
             <h2 className="text-2xl font-bold text-slate-800">Selamat Datang</h2>
             <p className="mt-1 text-sm text-slate-500">Masuk dengan akun terdaftar</p>
           </div>
@@ -108,7 +108,13 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="password" className="text-sm font-semibold text-slate-700">Password</Label>
+              {/* Flex container untuk Label dan Link Lupa Password */}
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-sm font-semibold text-slate-700">Password</Label>
+                <Link href="/forgot-password" className="text-xs font-medium text-[#0d5c36] hover:underline">
+                  Lupa Password?
+                </Link>
+              </div>
               <div className="relative">
                 <Input
                   id="password"
